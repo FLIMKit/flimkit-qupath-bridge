@@ -35,19 +35,30 @@ def raster = image.getRaster()
 
 double total = 0.0d
 double peak = -Double.MAX_VALUE
+int finite = 0
+int nan = 0
 for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
         double value = raster.getSampleFloat(x, y, 0)
+        if (Double.isNaN(value)) {
+            nan++
+            continue
+        }
+        finite++
         total += value
         if (value > peak) {
             peak = value
         }
     }
 }
+def pixelType = server.getPixelType().toString()
 server.close()
 Files.deleteIfExists(file)
+if (finite == 0) {
+    peak = Double.NaN
+}
 
 println(String.format(
     Locale.US,
-    'QUPATH_REAL_OK id=%s width=%d height=%d type=%s sum=%.1f max=%.1f unit=%s',
-    imageId, width, height, server.getPixelType().toString(), total, peak, unit))
+    'QUPATH_REAL_OK id=%s width=%d height=%d type=%s sum=%.6f max=%.9f finite=%d nan=%d unit=%s',
+    imageId, width, height, pixelType, total, peak, finite, nan, unit))
