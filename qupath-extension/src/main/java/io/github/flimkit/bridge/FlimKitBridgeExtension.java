@@ -15,8 +15,14 @@ import qupath.lib.gui.tools.MenuTools;
 import qupath.lib.io.GsonTools;
 import qupath.lib.objects.PathObject;
 
+import qupath.lib.projects.Project;
+
 import javafx.scene.control.MenuItem;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -50,6 +56,8 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                 qupath.getMenu(MENU, true),
                 menuItem("Connect...", () -> promptForConnection(qupath)),
                 null,
+                menuItem("Add FLIMKit images to project", () -> addImages(qupath)),
+                null,
                 menuItem("Send annotations to FLIMKit", () -> sendAnnotations(qupath)),
                 menuItem("Fetch ROIs from FLIMKit", () -> fetchAnnotations(qupath)));
     }
@@ -79,6 +87,47 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             Dialogs.showErrorMessage(getName(), "Could not reach " + baseUrl
                     + "\n\n" + e.getMessage());
         }
+    }
+
+    private void addImages(QuPathGUI qupath) {
+        var project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage(getName(),
+                    "No project is open. Create or open a project first, so the "
+                            + "FLIMKit images can sit beside your brightfield image.");
+            return;
+        }
+        var client = new BridgeClient(baseUrl, token);
+        var added = new ArrayList<String>();
+        var skipped = new ArrayList<String>();
+        for (String imageId : List.of("intensity", "lifetime")) {
+            try {
+                var fetched = client.fetchImage(imageId);
+                Path stored = ProjectImporter.storeBesideProject(
+                        project, imageId, fetched.file());
+                var entry = ProjectImporter.addToProject(
+                        project, stored, imageId, fetched.valueUnit());
+                added.add(entry.getImageName());
+            } catch (Exception e) {
+                logger.warn("Could not add {}", imageId, e);
+                skipped.add(imageId);
+            }
+        }
+        if (added.isEmpty()) {
+            Dialogs.showErrorMessage(getName(),
+                    "No FLIMKit images could be added. Is a dataset open in FLIMKit?");
+            return;
+        }
+        try {
+            project.syncChanges();
+        } catch (IOException e) {
+            logger.error("Could not save the project", e);
+        }
+        qupath.refreshProject();
+        String message = "Added " + String.join(", ", added);
+        if (!skipped.isEmpty())
+            message += "\nNot available: " + String.join(", ", skipped);
+        Dialogs.showInfoNotification(getName(), message);
     }
 
     private void sendAnnotations(QuPathGUI qupath) {
