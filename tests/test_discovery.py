@@ -1,8 +1,5 @@
 import json
 import os
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
-
 import numpy as np
 import pytest
 
@@ -74,23 +71,34 @@ def running(serve_state):
     return serve_state(state), state
 
 
+def _status_with_host(base_url, host_header):
+    import http.client
+    address = base_url.removeprefix('http://')
+    connection = http.client.HTTPConnection(address, timeout=10)
+    try:
+        connection.request('GET', '/v1/status', headers={'Host': host_header})
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
 def test_foreign_host_header_is_refused(running):
     base_url, _ = running
-    request = Request(
-        f'{base_url}/v1/status',
-        headers={'Host': 'evil.example.com'},
-    )
-    with pytest.raises(HTTPError) as caught:
-        urlopen(request)
-    assert caught.value.code == 403
+
+    status, _ = _status_with_host(base_url, 'evil.example.com')
+
+    assert status == 403
 
 
 def test_localhost_host_header_is_allowed(running):
     base_url, _ = running
     port = base_url.rsplit(':', 1)[-1]
-    request = Request(f'{base_url}/v1/status', headers={'Host': f'localhost:{port}'})
-    with urlopen(request) as response:
-        assert json.load(response)['protocol'] == 'flimkit-qupath'
+
+    status, body = _status_with_host(base_url, f'localhost:{port}')
+
+    assert status == 200
+    assert json.loads(body)['protocol'] == 'flimkit-qupath'
 
 
 def test_port_fallback_when_busy():
