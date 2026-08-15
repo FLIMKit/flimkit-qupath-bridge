@@ -14,6 +14,13 @@ The FLIM workflow that matters here is drawing ROIs on a co-registered brightfie
 
 QuPath also treats GeoJSON as a first-class format, so the ROI half of the bridge is less work than it was for Fiji.
 
+## Acknowledgement
+
+The wire protocol used here was designed and first implemented in
+[flimkit-fiji-bridge](https://github.com/FLIMKit/flimkit-fiji-bridge) by Zhen Yuan Yeo
+(https://doi.org/10.5281/zenodo.21951612). This bridge reuses it unchanged, so a
+client written against one works against the other.
+
 ## Licensing
 
 Two licences, because the two halves link against different things. The Python
