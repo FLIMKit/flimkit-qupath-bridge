@@ -53,6 +53,7 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
         def _local_only(self):
             if _host_allowed(self.headers.get('Host')):
                 return True
+            self.close_connection = True
             self.send_error(403, 'the bridge only answers to localhost')
             return False
 
@@ -153,6 +154,10 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
         def log_message(self, format, *args):
             pass
 
-    server = ThreadingHTTPServer((host, port), Handler)
+    class Server(ThreadingHTTPServer):
+        daemon_threads = True
+        block_on_close = False
+
+    server = Server((host, port), Handler)
     server.state = state
     return server
