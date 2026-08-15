@@ -16,6 +16,14 @@ The FLIM workflow that matters here is drawing ROIs on a co-registered brightfie
 
 QuPath also treats GeoJSON as a first-class format, so the ROI half of the bridge is less work than it was for Fiji.
 
+## Pairing
+
+FLIMKit writes its address and a freshly generated token to `~/.flimkit/qupath-bridge.json` when it starts, owner-readable only where the platform supports it. QuPath reads that file, so `Extensions > FLIMKit bridge > Connect` needs nothing typed in.
+
+If the file names a FLIMKit that is no longer running, QuPath says so rather than failing with a connection error. `Connect to a different address...` is there for the case where the file cannot be reached, such as FLIMKit running in a container or on the other end of an SSH tunnel.
+
+The bridge listens on `127.0.0.1` only and refuses any request whose `Host` header is not localhost, which stops a web page reaching it by pointing its own hostname at your machine. If port 8765 is busy it takes an ephemeral one and records it in the same file, so nothing needs reconfiguring.
+
 ## Acknowledgement
 
 The wire protocol used here was designed and first implemented in

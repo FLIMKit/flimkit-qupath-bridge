@@ -1,3 +1,4 @@
+import atexit
 import secrets
 import threading
 
@@ -11,6 +12,7 @@ from flimkit.plugins import (
     tool,
 )
 
+from flimkit_qupath_bridge import discovery
 from flimkit_qupath_bridge.server import BridgeState, create_server
 
 FLIMKIT_PLUGIN_API = 1
@@ -38,10 +40,19 @@ def _live_state(app):
     return state
 
 
+def _bind(token, state, port):
+    try:
+        return create_server('127.0.0.1', port, token, state, live=True)
+    except OSError:
+        if port == 0:
+            raise
+        return create_server('127.0.0.1', 0, token, state, live=True)
+
+
 def _start_server(app, port=DEFAULT_PORT):
     token = secrets.token_urlsafe(24)
     state = _live_state(app)
-    server = create_server('127.0.0.1', port, token, state, live=True)
+    server = _bind(token, state, port)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, bound = server.server_address
@@ -52,6 +63,8 @@ def _start_server(app, port=DEFAULT_PORT):
         'url': f'http://{host}:{bound}',
         'error': '',
     })
+    discovery.write(_state['url'], token)
+    atexit.register(discovery.remove)
     return _state
 
 
@@ -65,10 +78,12 @@ def start_bridge(app):
         _start_server(app, port)
     except OSError as exc:
         _state['error'] = str(exc)
-        print(f'[QuPath bridge] could not bind port {port}: {exc}')
+        print(f'[QuPath bridge] could not bind a port: {exc}')
         return
+    if _state['url'] != f'http://127.0.0.1:{port}':
+        print(f'[QuPath bridge] port {port} was busy, using {_state["url"]}')
     print(f'[QuPath bridge] listening on {_state["url"]}')
-    print(f'[QuPath bridge] pairing token: {_state["token"]}')
+    print(f'[QuPath bridge] details written to {discovery.discovery_path()}')
 
 
 @panel_button('qupath_bridge_send', 'Send to QuPath', panel='roi', order=200)
@@ -89,8 +104,8 @@ def send_to_qupath(app):
             'No QuPath instance has connected to FLIMKit yet.\n\n'
             'Start QuPath, then choose\n'
             'Extensions > FLIMKit bridge > Connect...\n\n'
-            f'Address: {_state["url"]}\n'
-            f'Token: {_state["token"]}',
+            'QuPath finds the address and token itself, from\n'
+            f'{discovery.discovery_path()}',
             parent=getattr(app, 'root', None),
         )
         return
@@ -127,8 +142,8 @@ def open_bridge(app):
     messagebox.showinfo(
         'QuPath bridge',
         f'Address: {_state["url"]}\n'
-        f'Token: {_state["token"]}\n'
         f'QuPath connected: {connected}\n\n'
+        f'Pairing details: {discovery.discovery_path()}\n\n'
         'In QuPath choose\n'
         'Extensions > FLIMKit bridge > Connect...',
         parent=getattr(app, 'root', None),

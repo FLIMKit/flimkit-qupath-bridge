@@ -54,7 +54,8 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
     public void installExtension(QuPathGUI qupath) {
         MenuTools.addMenuItems(
                 qupath.getMenu(MENU, true),
-                menuItem("Connect...", () -> promptForConnection(qupath)),
+                menuItem("Connect", () -> promptForConnection(qupath)),
+                menuItem("Connect to a different address...", () -> promptManually()),
                 null,
                 menuItem("Add FLIMKit images to project", () -> addImages(qupath)),
                 null,
@@ -69,6 +70,26 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
     }
 
     private void promptForConnection(QuPathGUI qupath) {
+        try {
+            var details = Discovery.read();
+            if (details.stale()) {
+                Dialogs.showErrorMessage(getName(),
+                        "FLIMKit published a bridge address but that FLIMKit is no longer "
+                                + "running.\n\nStart FLIMKit, then try again.");
+                return;
+            }
+            baseUrl = details.url();
+            token = details.token();
+            new BridgeClient(baseUrl, token).status();
+            Dialogs.showInfoNotification(getName(), "Connected to " + baseUrl);
+            return;
+        } catch (Exception e) {
+            logger.info("No usable discovery file, asking instead: {}", e.getMessage());
+        }
+        promptManually();
+    }
+
+    private void promptManually() {
         String url = Dialogs.showInputDialog(
                 getName(), "FLIMKit bridge address", baseUrl);
         if (url == null)

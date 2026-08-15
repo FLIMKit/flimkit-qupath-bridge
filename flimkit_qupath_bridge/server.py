@@ -37,9 +37,25 @@ def _live_import(state, payload):
     return import_rois_geojson(state.app, payload, mode='append')
 
 
+_ALLOWED_HOSTS = ('127.0.0.1', 'localhost', '::1', '[::1]')
+
+
+def _host_allowed(header):
+    if not header:
+        return True
+    name = header.rsplit(':', 1)[0] if header.count(':') == 1 else header
+    return name.strip().lower() in _ALLOWED_HOSTS
+
+
 def create_server(host: str, port: int, token: str, state: BridgeState,
                   live: bool = False):
     class Handler(BaseHTTPRequestHandler):
+        def _local_only(self):
+            if _host_allowed(self.headers.get('Host')):
+                return True
+            self.send_error(403, 'the bridge only answers to localhost')
+            return False
+
         def _authorized(self):
             ok = self.headers.get('Authorization') == f'Bearer {token}'
             if ok:
@@ -55,6 +71,8 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
             self.wfile.write(body)
 
         def do_GET(self):
+            if not self._local_only():
+                return
             if self.path == '/v1/status':
                 self._send_json(200, {
                     'protocol': 'flimkit-qupath',
@@ -104,6 +122,8 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
             self.send_error(404)
 
         def do_POST(self):
+            if not self._local_only():
+                return
             if self.path != '/v1/rois':
                 self.send_error(404)
                 return
