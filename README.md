@@ -1,12 +1,14 @@
 # FLIMKit QuPath bridge
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21954999.svg)](https://doi.org/10.5281/zenodo.21954999)
+
 Direct image and ROI exchange between [FLIMKit](https://github.com/FLIMKit/FLIMKit) and [QuPath](https://qupath.github.io/).
 
 ## Status
 
-Under development, and private while the design is settled.
+v0.1.0. The transport, the ROI exchange in both directions and the project import are covered by tests, including against real FLIMKit sessions. The QuPath menu items and the FLIMKit button have not yet been driven by hand in a live session.
 
-It mirrors [flimkit-fiji-bridge](https://github.com/FLIMKit/flimkit-fiji-bridge), which shipped v0.1.0 on 2026-08-15, and reuses its wire protocol unchanged.
+It reuses the wire protocol from [flimkit-fiji-bridge](https://github.com/FLIMKit/flimkit-fiji-bridge) unchanged, so a client written against one works against the other. Beyond that the two have diverged: this one ships a QuPath extension that runs inside a live session, imports the FLIMKit images into the open project, and moves ROIs in both directions.
 
 ## Why QuPath as well as Fiji
 
