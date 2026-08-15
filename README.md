@@ -14,6 +14,12 @@ The FLIM workflow that matters here is drawing ROIs on a co-registered brightfie
 
 QuPath also treats GeoJSON as a first-class format, so the ROI half of the bridge is less work than it was for Fiji.
 
+## Licensing
+
+Two licences, because the two halves link against different things. The Python
+package is MIT. The QuPath extension is GPL-3.0, because it links QuPath, which is
+GPL-3.0. See [LICENSING.md](LICENSING.md).
+
 ## Requirements
 
 - QuPath 0.7.0 or newer.
