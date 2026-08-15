@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -6,51 +7,36 @@ import pytest
 
 from flimkit_qupath_bridge.server import BridgeState
 
-PTU_PATH = os.environ.get('FLIMKIT_TEST_PTU', '')
+SESSION_PATH = os.environ.get('FLIMKIT_TEST_SESSION', '')
 QUPATH_PATH = os.environ.get('QUPATH_PATH', '')
 
 pytestmark = pytest.mark.skipif(
-    not PTU_PATH or not Path(PTU_PATH).exists() or not QUPATH_PATH,
-    reason='set FLIMKIT_TEST_PTU and QUPATH_PATH to run the real-data tests',
+    not SESSION_PATH or not Path(SESSION_PATH).exists() or not QUPATH_PATH,
+    reason='set FLIMKIT_TEST_SESSION and QUPATH_PATH to run the real-data tests',
 )
 
 
 @pytest.fixture(scope='module')
-def intensity_image():
-    reader = pytest.importorskip('flimkit.formats.PTU.reader')
-    image, _ = reader.get_intensity_image(PTU_PATH)
-    return np.asarray(image)
+def session():
+    return np.load(SESSION_PATH, allow_pickle=True)
 
 
 @pytest.fixture(scope='module')
-def lifetime_map():
-    pytest.importorskip('flimkit.FLIM.fitters')
-    from flimkit.FLIM.fitters import fit_per_pixel, fit_summed
-    from flimkit.FLIM.irf_tools import gaussian_irf_from_fwhm
-    from flimkit.formats.PTU.reader import read_ptu
+def intensity_image(session):
+    return np.asarray(session['fov_intensity_map'], dtype=np.float32)
 
-    stack, meta = read_ptu(PTU_PATH, binning=2)
-    tcspc_res = meta['tcspc_resolution']
-    n_bins = meta['n_bins']
-    decay = stack.sum(axis=(0, 1)).astype(float)
-    irf = gaussian_irf_from_fwhm(
-        n_bins, tcspc_res, 0.15, max(int(np.argmax(decay)) - 4, 0))
-    global_popt, summary = fit_summed(
-        decay, tcspc_res, n_bins, irf,
-        False, True, True,
-        1, 0.2, 6.0,
-        optimizer='de', workers=1,
-    )
-    maps = fit_per_pixel(
-        stack, tcspc_res, n_bins, irf,
-        False, True, True,
-        global_popt, 1,
-        min_photons=50,
-        tau_min_ns=0.2, tau_max_ns=6.0,
-        fit_idx=summary.get('fit_idx'),
-        use_gpu=False,
-    )
-    return np.asarray(maps['tau_mean_int'], dtype=np.float32)
+
+@pytest.fixture(scope='module')
+def lifetime_map(session):
+    return np.asarray(session['fov_lifetime_map'], dtype=np.float32)
+
+
+@pytest.fixture(scope='module')
+def exported_rois(session):
+    roi_tools = pytest.importorskip('flimkit.UI.roi_tools')
+    manager = roi_tools.RoiManager.from_json(str(session['fov_regions']))
+    assert manager.regions, 'session carries no regions'
+    return manager.to_geojson()
 
 
 def test_real_intensity_survives_the_trip(serve_state, verify_image, intensity_image):
@@ -90,3 +76,41 @@ def test_real_lifetime_map_survives_the_trip(serve_state, verify_image, lifetime
         float(lifetime_map[finite].max()), rel=1e-6)
     assert float(reported['sum']) == pytest.approx(
         float(lifetime_map[finite].sum()), rel=1e-5)
+
+
+@pytest.mark.xfail(
+    reason='FLIMKit exports self-intersecting freehand rings, which JTS rejects',
+    strict=True,
+)
+def test_real_flimkit_rois_parse_in_qupath(serve_state, parse_rois, exported_rois):
+    state = BridgeState(images={}, exported_rois=exported_rois)
+    reported = parse_rois(QUPATH_PATH, serve_state(state))
+
+    assert int(reported['objects']) == len(exported_rois['features'])
+    assert int(reported['with_roi']) == len(exported_rois['features'])
+    assert int(reported['empty']) == 0
+
+
+def test_real_freehand_rings_are_self_intersecting(exported_rois):
+    shapely = pytest.importorskip('shapely.geometry')
+    invalid = [
+        feature['properties']['name']
+        for feature in exported_rois['features']
+        if not shapely.Polygon(feature['geometry']['coordinates'][0]).is_valid
+    ]
+    assert invalid, (
+        'this session no longer reproduces the self-intersecting export; '
+        'if FLIMKit now emits simple rings, drop the xfail above'
+    )
+
+
+def test_real_rois_are_closed_polygons(exported_rois):
+    assert exported_rois['type'] == 'FeatureCollection'
+    for feature in exported_rois['features']:
+        geometry = feature['geometry']
+        assert geometry['type'] == 'Polygon'
+        ring = geometry['coordinates'][0]
+        assert len(ring) >= 4
+        assert ring[0] == ring[-1]
+        assert feature['properties']['tool_type'] in (
+            'rect', 'ellipse', 'polygon', 'freehand')
