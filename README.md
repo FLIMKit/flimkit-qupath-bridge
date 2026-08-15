@@ -14,6 +14,29 @@ The FLIM workflow that matters here is drawing ROIs on a co-registered brightfie
 
 QuPath also treats GeoJSON as a first-class format, so the ROI half of the bridge is less work than it was for Fiji.
 
+## Requirements
+
+- QuPath 0.7.0 or newer.
+- FLIMKit with the plugin bindings, which means a build after PR #52.
+- Python 3.12 or newer.
+- The [QuPath alignment extension](https://github.com/qupath/qupath-extension-align), for co-registration.
+
+The alignment extension is not optional for the intended workflow and it does not ship with QuPath. QuPath 0.7.0 does not bundle interactive image alignment, and neither did 0.6.0, so it has to be downloaded and dropped into QuPath's extensions directory separately.
+
+Without it you can still move images and ROIs, but only between images that already share a coordinate system. Aligning a brightfield or histology image to the FLIM field of view, which is the reason this bridge exists, needs that extension installed.
+
+## Co-registration
+
+FLIMKit receives ROIs in FLIM image-pixel coordinates. Anything drawn on another image has to be transformed into that space before it is sent, and the transform is produced on the QuPath side, the same division of labour the Fiji bridge uses.
+
+The intended sequence:
+
+1. Open the brightfield image and add the FLIM intensity map to the same QuPath project.
+2. Align them with the alignment extension and transfer the annotations onto the FLIM image.
+3. Send the annotations on the FLIM image to FLIMKit.
+
+This bridge deliberately contains no alignment code of its own. Reimplementing it would mean maintaining a copy of something QuPath's own developers already maintain.
+
 ## Verified against QuPath 0.7.0
 
 The plan is built on API behaviour confirmed by running it on 2026-08-15, not on documentation alone:

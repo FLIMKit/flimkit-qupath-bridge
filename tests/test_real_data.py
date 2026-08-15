@@ -78,10 +78,6 @@ def test_real_lifetime_map_survives_the_trip(serve_state, verify_image, lifetime
         float(lifetime_map[finite].sum()), rel=1e-5)
 
 
-@pytest.mark.xfail(
-    reason='FLIMKit exports self-intersecting freehand rings, which JTS rejects',
-    strict=True,
-)
 def test_real_flimkit_rois_parse_in_qupath(serve_state, parse_rois, exported_rois):
     state = BridgeState(images={}, exported_rois=exported_rois)
     reported = parse_rois(QUPATH_PATH, serve_state(state))
@@ -91,17 +87,23 @@ def test_real_flimkit_rois_parse_in_qupath(serve_state, parse_rois, exported_roi
     assert int(reported['empty']) == 0
 
 
-def test_real_freehand_rings_are_self_intersecting(exported_rois):
+def test_real_freehand_rings_are_simple(exported_rois):
     shapely = pytest.importorskip('shapely.geometry')
     invalid = [
         feature['properties']['name']
         for feature in exported_rois['features']
         if not shapely.Polygon(feature['geometry']['coordinates'][0]).is_valid
     ]
-    assert invalid, (
-        'this session no longer reproduces the self-intersecting export; '
-        'if FLIMKit now emits simple rings, drop the xfail above'
-    )
+    assert not invalid, f'FLIMKit exported invalid rings: {invalid}'
+
+
+def test_repaired_rings_are_flagged(exported_rois):
+    repaired = [
+        feature['properties']['name']
+        for feature in exported_rois['features']
+        if feature['properties'].get('repaired') == 'self-intersecting'
+    ]
+    assert repaired, 'this session no longer exercises the repair path'
 
 
 def test_real_rois_are_closed_polygons(exported_rois):
