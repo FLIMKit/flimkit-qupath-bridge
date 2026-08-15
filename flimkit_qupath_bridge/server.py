@@ -17,12 +17,34 @@ class BridgeState:
     units: dict[str, str] = field(default_factory=dict)
     exported_rois: dict = field(default_factory=_empty_collection)
     received_rois: list[dict] = field(default_factory=list)
+    app: object = None
+    connected: bool = False
 
 
-def create_server(host: str, port: int, token: str, state: BridgeState):
+def _live_images(state):
+    from flimkit.plugins import get_current_images
+    current = get_current_images(state.app)
+    return current.get('images', {}), current.get('units', {})
+
+
+def _live_rois(state):
+    from flimkit.plugins import export_rois_geojson
+    return export_rois_geojson(state.app)
+
+
+def _live_import(state, payload):
+    from flimkit.plugins import import_rois_geojson
+    return import_rois_geojson(state.app, payload, mode='append')
+
+
+def create_server(host: str, port: int, token: str, state: BridgeState,
+                  live: bool = False):
     class Handler(BaseHTTPRequestHandler):
         def _authorized(self):
-            return self.headers.get('Authorization') == f'Bearer {token}'
+            ok = self.headers.get('Authorization') == f'Bearer {token}'
+            if ok:
+                state.connected = True
+            return ok
 
         def _send_json(self, status, payload):
             body = json.dumps(payload).encode('utf-8')
@@ -43,7 +65,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState):
                 if not self._authorized():
                     self.send_error(401)
                     return
-                self._send_json(200, state.exported_rois)
+                try:
+                    payload = _live_rois(state) if live else state.exported_rois
+                except Exception as exc:
+                    self.send_error(500, str(exc))
+                    return
+                self._send_json(200, payload)
                 return
             prefix = '/v1/images/'
             if self.path.startswith(prefix) and self.path.endswith('.tif'):
@@ -51,8 +78,15 @@ def create_server(host: str, port: int, token: str, state: BridgeState):
                     self.send_error(401)
                     return
                 image_id = self.path[len(prefix):-len('.tif')]
+                images, units = state.images, state.units
+                if live:
+                    try:
+                        images, units = _live_images(state)
+                    except Exception as exc:
+                        self.send_error(500, str(exc))
+                        return
                 try:
-                    image = state.images[image_id]
+                    image = images[image_id]
                 except KeyError:
                     self.send_error(404)
                     return
@@ -63,7 +97,7 @@ def create_server(host: str, port: int, token: str, state: BridgeState):
                 self.send_header('Content-Type', 'image/tiff')
                 self.send_header('Content-Length', str(len(body)))
                 self.send_header(
-                    'X-FLIMKit-Value-Unit', state.units.get(image_id, ''))
+                    'X-FLIMKit-Value-Unit', units.get(image_id, ''))
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -86,6 +120,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState):
                 self.send_error(400)
                 return
             state.received_rois.append(payload)
+            if live:
+                try:
+                    _live_import(state, payload)
+                except Exception as exc:
+                    self.send_error(500, str(exc))
+                    return
             self._send_json(200, {
                 'received_features': len(payload.get('features', [])),
             })
@@ -93,4 +133,6 @@ def create_server(host: str, port: int, token: str, state: BridgeState):
         def log_message(self, format, *args):
             pass
 
-    return ThreadingHTTPServer((host, port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.state = state
+    return server
