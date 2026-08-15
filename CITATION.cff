@@ -7,9 +7,7 @@ authors:
     affiliation: "Centre for Inflammation Research, Institute for Regeneration and Repair, University of Edinburgh, Edinburgh, UK"
     orcid: "https://orcid.org/0009-0006-2990-649X"
 type: software
-license:
-  - MIT
-  - GPL-3.0-or-later
+license: GPL-3.0-or-later
 version: 0.1.0
 date-released: 2026-08-15
 repository-code: "https://github.com/FLIMKit/flimkit-qupath-bridge"
