@@ -26,10 +26,12 @@ jobs:
           pip install --no-deps 'flimkit @ git+https://github.com/FLIMKit/FLIMKit'
 
       - name: Install the add-on
-        run: pip install -e '.[test]'
+        run: |
+          pip install -e '.[test]'
+          pip install pytest-timeout
 
       - name: Run tests
-        run: pytest -q
+        run: pytest -v --full-trace --timeout=60 --timeout-method=thread
 
   extension:
     runs-on: ubuntu-latest
