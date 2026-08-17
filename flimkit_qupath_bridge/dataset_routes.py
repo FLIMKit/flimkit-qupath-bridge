@@ -209,10 +209,10 @@ def _phasor_state(state, ident):
         meta = registry.metadata(ident)
     except KeyError:
         raise RouteError(404, f'no such dataset: {ident}')
-    if meta['format'] != 'ptu':
+    if meta['modality'] != 'time':
         raise RouteError(
             409,
-            f"phasor is only available for PicoQuant PTU files, not {meta['format']}")
+            f"phasor from a decay needs a time-domain file, not {meta['format']}")
     held = getattr(state, '_phasor_cache', None)
     if held is None:
         held = {}

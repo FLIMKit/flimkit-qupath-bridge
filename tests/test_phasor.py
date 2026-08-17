@@ -135,3 +135,45 @@ def test_an_unknown_cursor_type_is_refused(two_populations):
         phasor.cursor_masks(real, imag, mean,
                             cursors=[{'id': 'x', 'type': 'banana'}],
                             min_photons=1.0)
+
+
+import os
+from pathlib import Path
+
+PTU_PATH = os.environ.get('FLIMKIT_TEST_PTU', '')
+SDT_PATH = os.environ.get('FLIMKIT_TEST_SDT', '')
+
+
+@pytest.mark.skipif(not PTU_PATH or not Path(PTU_PATH).exists(),
+                    reason='set FLIMKIT_TEST_PTU')
+def test_generic_path_matches_flimkits_ptu_phasor():
+    """FLIMKit's own entry point is PTU-only. Routing through FLIMFile must
+    give the same numbers, or the two front ends would disagree."""
+    import io
+    import contextlib
+    from flimkit.phasor_launcher import _process_ptu
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        reference = _process_ptu(PTU_PATH, channel=0)
+        ours = phasor.compute(PTU_PATH, channel=0)
+
+    np.testing.assert_allclose(
+        ours['real'], phasor._first_harmonic(reference['real_cal']),
+        equal_nan=True, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        ours['imag'], phasor._first_harmonic(reference['imag_cal']),
+        equal_nan=True, rtol=1e-12, atol=1e-12)
+    assert ours['frequency'] == pytest.approx(float(reference['frequency']))
+
+
+@pytest.mark.skipif(not SDT_PATH or not Path(SDT_PATH).exists(),
+                    reason='set FLIMKIT_TEST_SDT')
+def test_becker_hickl_sdt_gets_a_phasor():
+    found = phasor.compute(SDT_PATH, channel=0)
+
+    assert found['real'].ndim == 2
+    assert found['real'].shape == found['imag'].shape == found['mean'].shape
+    assert found['frequency'] > 0
+    valid = phasor.valid_pixels(found['real'], found['mean'], min_photons=1.0)
+    assert valid.any(), 'no pixel had enough photons for a phasor'

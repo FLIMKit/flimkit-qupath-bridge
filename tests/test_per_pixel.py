@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from flimkit_qupath_bridge import fitting
-from tests.test_fitting import _synthetic_stack
+from test_fitting import _synthetic_stack
 
 
 def _stack(tau_ns=2.0, shape=(8, 8)):

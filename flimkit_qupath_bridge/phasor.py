@@ -105,14 +105,52 @@ def _first_harmonic(array):
     return array
 
 
-def compute(path, channel=None, irf_path=None):
-    from flimkit.phasor_launcher import _process_ptu
-    found = _process_ptu(path, irf_path=irf_path, channel=channel)
-    return {
-        'real': _first_harmonic(found['real_cal']),
-        'imag': _first_harmonic(found['imag_cal']),
-        'mean': _first_harmonic(found['mean']),
-        'frequency': float(found['frequency']),
-        'channel': found.get('channel'),
-        'calibrated': irf_path is not None,
+def compute(path, channel=None, irf_path=None, binning=4):
+    """Phasor coordinates for any time-domain reader FLIMKit can open.
+
+    FLIMKit's own phasor entry point goes through signal_from_PTUFile and is
+    therefore PTU-only. Reading the cube through FLIMFile instead gives the
+    same numbers, verified bit-identical on a real PTU, and works for every
+    format FLIMFile supports.
+    """
+    from phasorpy.phasor import phasor_from_signal
+    from flimkit.formats import FLIMFile
+    handle = FLIMFile(path, verbose=False)
+    stack = handle.raw_pixel_stack(channel=channel, binning=binning)
+    mean, real, imag = phasor_from_signal(stack, axis=2)
+    frequency = getattr(handle, 'sync_rate', None)
+    if not frequency:
+        raise ValueError(
+            f'{path} does not report a laser repetition rate, so phasor '
+            'coordinates cannot be placed on the universal semicircle')
+    found = {
+        'real': _first_harmonic(real),
+        'imag': _first_harmonic(imag),
+        'mean': _first_harmonic(mean),
+        'frequency': float(frequency) / 1e6,
+        'channel': channel,
+        'calibrated': False,
     }
+    if irf_path:
+        found.update(_calibrate(found, handle, irf_path, stack))
+    return found
+
+
+def _calibrate(found, handle, irf_path, stack):
+    from flimkit.phasor.signal import (calibrate_signal_with_irf,
+                                       calibrate_signal_with_machine_irf)
+    import xarray as xr
+    signal = xr.DataArray(stack, dims=('Y', 'X', 'H'))
+    signal.attrs['frequency'] = found['frequency']
+    if str(irf_path).endswith('.npy'):
+        real_cal, imag_cal = calibrate_signal_with_machine_irf(
+            signal, found['real'], found['imag'], irf_path, found['frequency'])
+    else:
+        from flimkit.phasor.signal import get_phasor_irf
+        irf_time_ns, irf_counts = get_phasor_irf(irf_path)
+        real_cal, imag_cal = calibrate_signal_with_irf(
+            signal, found['real'], found['imag'], irf_time_ns, irf_counts,
+            found['frequency'])
+    return {'real': _first_harmonic(real_cal),
+            'imag': _first_harmonic(imag_cal),
+            'calibrated': True}

@@ -112,9 +112,13 @@ def test_empty_cursor_list_is_refused(dataset):
 
 @pytest.mark.skipif(not SDT_PATH or not Path(SDT_PATH).exists(),
                     reason='set FLIMKIT_TEST_SDT')
-def test_phasor_is_refused_for_non_ptu(served):
+def test_phasor_works_for_becker_hickl_sdt(served):
+    """Phasor is routed through FLIMFile rather than FLIMKit's PTU-only entry
+    point, so every time-domain format it can read gets a phasor."""
     opened = _call(served, '/v1/datasets', 'POST', {'path': SDT_PATH})
 
-    with pytest.raises(HTTPError) as caught:
-        _call(served, f"/v1/datasets/{opened['id']}/phasor")
-    assert caught.value.code == 409
+    payload = _call(served, f"/v1/datasets/{opened['id']}/phasor")
+
+    assert payload['width'] > 0 and payload['height'] > 0
+    assert payload['frequency_hz'] > 0
+    assert payload['binning'] in (1, 2, 4, 8, 16)
