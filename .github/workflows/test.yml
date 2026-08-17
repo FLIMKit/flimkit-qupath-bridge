@@ -23,7 +23,7 @@ jobs:
       - name: Install FLIMKit
         run: |
           python -m pip install --upgrade pip
-          pip install --no-deps 'flimkit @ git+https://github.com/FLIMKit/FLIMKit'
+          pip install 'flimkit @ git+https://github.com/FLIMKit/FLIMKit'
 
       - name: Install the add-on
         run: |
