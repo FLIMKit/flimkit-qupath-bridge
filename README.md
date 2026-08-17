@@ -46,6 +46,8 @@ GPL-3.0. See [LICENSING.md](LICENSING.md).
 - Python 3.12 or newer.
 - The [QuPath alignment extension](https://github.com/qupath/qupath-extension-align), for co-registration.
 
+The alignment extension will not open 32-bit float images, and both FLIMKit maps are served as 32-bit float. Align on a 16-bit intensity image of the same field of view; the transform is valid for the FLIM images too, because they share the pixel grid.
+
 The alignment extension is not optional for the intended workflow and it does not ship with QuPath. QuPath 0.7.0 does not bundle interactive image alignment, and neither did 0.6.0, so it has to be downloaded and dropped into QuPath's extensions directory separately.
 
 Without it you can still move images and ROIs, but only between images that already share a coordinate system. Aligning a brightfield or histology image to the FLIM field of view, which is the reason this bridge exists, needs that extension installed.
