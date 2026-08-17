@@ -1,0 +1,224 @@
+import os
+import threading
+from collections import OrderedDict
+
+import numpy as np
+
+DEFAULT_PLANE_BUDGET = 512 * 1024 * 1024
+DEFAULT_MAX_STACK = 2 * 1024 * 1024 * 1024
+
+
+class StackTooLarge(Exception):
+
+    def __init__(self, estimated_bytes, limit_bytes, suggest_binning):
+        super().__init__(
+            f'decoding this stack needs about {estimated_bytes / 1e9:.2f} GB, '
+            f'over the {limit_bytes / 1e9:.2f} GB limit; '
+            f'try binning={suggest_binning}')
+        self.estimated_bytes = estimated_bytes
+        self.limit_bytes = limit_bytes
+        self.suggest_binning = suggest_binning
+
+
+class _FlimFileReader:
+
+    def __init__(self, path, channel):
+        from flimkit.formats import FLIMFile, detect_format, file_modality
+        self._file = FLIMFile(path, verbose=False)
+        self._format = detect_format(path)
+        self._modality = file_modality(path)
+        self._channel = channel
+
+    def metadata(self):
+        tags = getattr(self._file, 'tags', {}) or {}
+        pixel_size = tags.get('ImgHdr_PixResol') or tags.get('ImgHdr_PixRes') or 0
+        return {
+            'format': self._format,
+            'modality': self._modality,
+            'n_x': int(self._file.n_x),
+            'n_y': int(self._file.n_y),
+            'n_bins': int(self._file.n_bins),
+            'tcspc_res': float(self._file.tcspc_res),
+            'channels': self._active_channels(),
+            'pixel_size_um': float(pixel_size) if pixel_size else None,
+        }
+
+    def _active_channels(self):
+        try:
+            from flimkit.phasor_launcher import get_ptu_active_channels
+            return list(get_ptu_active_channels(self._file.path))
+        except Exception:
+            return []
+
+    def raw_stack(self, channel, binning):
+        return self._file.raw_pixel_stack(channel=channel, binning=binning)
+
+
+def _default_opener(path, channel):
+    return _FlimFileReader(path, channel)
+
+
+class _Entry:
+
+    def __init__(self, ident, path, channel, reader):
+        self.id = ident
+        self.path = path
+        self.channel = channel
+        self.reader = reader
+        self.refcount = 0
+        self.meta = reader.metadata()
+        self.planes = OrderedDict()
+        self.lock = threading.RLock()
+
+
+class DatasetRegistry:
+
+    def __init__(self, opener=None, plane_budget_bytes=DEFAULT_PLANE_BUDGET,
+                 max_stack_bytes=DEFAULT_MAX_STACK):
+        self._opener = opener or _default_opener
+        self._plane_budget = plane_budget_bytes
+        self._max_stack = max_stack_bytes
+        self._lock = threading.RLock()
+        self._by_key = {}
+        self._by_id = {}
+        self._next = 0
+
+    @staticmethod
+    def infer_binning(stack_shape, map_shape):
+        sh, sw = stack_shape[0], stack_shape[1]
+        mh, mw = map_shape[0], map_shape[1]
+        if mh == 0 or mw == 0 or sh % mh or sw % mw:
+            raise ValueError(
+                f'map shape {map_shape} does not divide stack shape {stack_shape}')
+        binning = sh // mh
+        if sw // mw != binning:
+            raise ValueError(
+                f'map shape {map_shape} does not divide stack shape {stack_shape} '
+                'by the same factor on both axes')
+        return binning
+
+    def open(self, path, channel=None):
+        resolved = os.path.realpath(os.path.expanduser(str(path)))
+        key = (resolved, channel)
+        with self._lock:
+            ident = self._by_key.get(key)
+            if ident is not None:
+                self._by_id[ident].refcount += 1
+                return ident
+            reader = self._opener(resolved, channel)
+            self._next += 1
+            ident = f'ds_{self._next}'
+            entry = _Entry(ident, resolved, channel, reader)
+            entry.refcount = 1
+            self._by_key[key] = ident
+            self._by_id[ident] = entry
+            return ident
+
+    def close(self, ident):
+        with self._lock:
+            entry = self._by_id.get(ident)
+            if entry is None:
+                return True
+            entry.refcount -= 1
+            if entry.refcount > 0:
+                return False
+            del self._by_id[ident]
+            del self._by_key[(entry.path, entry.channel)]
+            return True
+
+    def refcount(self, ident):
+        with self._lock:
+            return self._by_id[ident].refcount
+
+    def list(self):
+        with self._lock:
+            return [self.metadata(i) for i in self._by_id]
+
+    def _entry(self, ident):
+        with self._lock:
+            entry = self._by_id.get(ident)
+        if entry is None:
+            raise KeyError(f'no such dataset: {ident}')
+        return entry
+
+    def estimated_stack_bytes(self, ident, binning):
+        entry = self._entry(ident)
+        meta = entry.meta
+        y = meta['n_y'] // binning
+        x = meta['n_x'] // binning
+        return int(y * x * meta['n_bins'] * 4)
+
+    def metadata(self, ident):
+        entry = self._entry(ident)
+        meta = entry.meta
+        estimates = {
+            str(b): self.estimated_stack_bytes(ident, b) for b in (1, 2, 4, 8)
+        }
+        return {
+            'id': entry.id,
+            'path': entry.path,
+            'channel': entry.channel,
+            'format': meta['format'],
+            'modality': meta['modality'],
+            'width': meta['n_x'],
+            'height': meta['n_y'],
+            'n_bins': meta['n_bins'],
+            'tcspc_res': meta['tcspc_res'],
+            'channels': meta['channels'],
+            'pixel_size_um': meta['pixel_size_um'],
+            'estimated_stack_bytes': estimates,
+            'planes': [p['id'] for p in self.planes(ident)],
+        }
+
+    def stack(self, ident, binning=1):
+        entry = self._entry(ident)
+        estimated = self.estimated_stack_bytes(ident, binning)
+        if estimated > self._max_stack:
+            suggest = binning
+            while suggest < 16 and self.estimated_stack_bytes(ident, suggest) > self._max_stack:
+                suggest *= 2
+            raise StackTooLarge(estimated, self._max_stack, suggest)
+        with entry.lock:
+            return entry.reader.raw_stack(entry.channel, binning)
+
+    def put_plane(self, ident, name, array, unit=''):
+        entry = self._entry(ident)
+        array = np.asarray(array)
+        with entry.lock:
+            entry.planes.pop(name, None)
+            entry.planes[name] = {'array': array, 'unit': unit}
+            self._evict(entry)
+
+    def _evict(self, entry):
+        total = sum(p['array'].nbytes for p in entry.planes.values())
+        while total > self._plane_budget and len(entry.planes) > 1:
+            _, dropped = entry.planes.popitem(last=False)
+            total -= dropped['array'].nbytes
+
+    def plane(self, ident, name):
+        entry = self._entry(ident)
+        with entry.lock:
+            found = entry.planes.get(name)
+            if found is None:
+                return None
+            entry.planes.move_to_end(name)
+            return found['array']
+
+    def plane_unit(self, ident, name):
+        entry = self._entry(ident)
+        with entry.lock:
+            found = entry.planes.get(name)
+            return '' if found is None else found['unit']
+
+    def planes(self, ident):
+        entry = self._entry(ident)
+        with entry.lock:
+            return [
+                {
+                    'id': name,
+                    'unit': held['unit'],
+                    'dtype': str(held['array'].dtype),
+                    'shape': list(held['array'].shape),
+                }
+                for name, held in entry.planes.items()
+            ]
