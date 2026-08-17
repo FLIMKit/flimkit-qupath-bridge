@@ -60,6 +60,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                 menuItem("Add FLIMKit images to project", () -> addImages(qupath)),
                 null,
                 menuItem("Fit ROI decays...", () -> fitRois(qupath)),
+                menuItem("Phasor plot...", () -> openPhasor(qupath)),
                 null,
                 menuItem("Send annotations to FLIMKit", () -> sendAnnotations(qupath)),
                 menuItem("Fetch ROIs from FLIMKit", () -> fetchAnnotations(qupath)));
@@ -151,6 +152,29 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         if (!skipped.isEmpty())
             message += "\nNot available: " + String.join(", ", skipped);
         Dialogs.showInfoNotification(getName(), message);
+    }
+
+    private void openPhasor(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(getName(), "No image is open.");
+            return;
+        }
+        if (!(imageData.getServer() instanceof FlimKitImageServer bridged)) {
+            Dialogs.showErrorMessage(getName(),
+                    "This image was not opened through the FLIMKit bridge, so "
+                            + "there is no decay data to build a phasor from.\n\n"
+                            + "Open the FLIM file itself with File > Open.");
+            return;
+        }
+        try {
+            new PhasorWindow(qupath, new BridgeClient(baseUrl, token),
+                    bridged.getDatasetId(), imageData).show();
+        } catch (Exception e) {
+            logger.error("Could not open the phasor window", e);
+            Dialogs.showErrorMessage(getName(),
+                    "Could not open the phasor plot\n\n" + e.getMessage());
+        }
     }
 
     private void fitRois(QuPathGUI qupath) {

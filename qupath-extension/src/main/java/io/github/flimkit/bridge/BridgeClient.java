@@ -160,6 +160,41 @@ public class BridgeClient {
         return response.body();
     }
 
+    public String phasorSummary(String datasetId) throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/phasor").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET phasor returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
+    public String phasorPoints(String datasetId, int bins)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/phasor/points?bins=" + bins)
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET phasor points returned " + response.statusCode());
+        return response.body();
+    }
+
+    public String phasorMask(String datasetId, String body)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/phasor/mask")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("POST phasor mask returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
     public String fetchRois() throws IOException, InterruptedException {
         var response = client.send(
                 request("/v1/rois").GET().build(),
