@@ -99,6 +99,16 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     'protocol_version': 1,
                 })
                 return
+            if self.path == '/v1/formats':
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                from flimkit_qupath_bridge import formats
+                try:
+                    self._send_json(200, formats.catalogue())
+                except Exception as exc:
+                    self.send_error(500, str(exc))
+                return
             if self.path == '/v1/rois':
                 if not self._authorized():
                     self.send_error(401)
@@ -144,6 +154,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
         def do_POST(self):
             if not self._local_only():
                 return
+            if self.path == '/v1/identify':
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._identify()
+                return
             if self.path != '/v1/rois':
                 self.send_error(404)
                 return
@@ -169,6 +185,26 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
             self._send_json(200, {
                 'received_features': len(payload.get('features', [])),
             })
+
+        def _identify(self):
+            from flimkit_qupath_bridge import formats
+            payload = self._read_json()
+            if payload is None:
+                return
+            try:
+                self._send_json(200, formats.identify(payload.get('path')))
+            except formats.PathProblem as problem:
+                self.send_error(problem.status, str(problem))
+            except Exception as exc:
+                self.send_error(500, str(exc))
+
+        def _read_json(self):
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                return json.loads(self.rfile.read(length).decode('utf-8'))
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                self.send_error(400, 'expected a JSON body')
+                return None
 
         def log_message(self, format, *args):
             pass
