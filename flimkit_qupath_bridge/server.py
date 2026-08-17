@@ -103,6 +103,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                 return
             if self._dataset_get():
                 return
+            if self.path == '/v1/fit/defaults':
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(lambda r: r.fit_defaults(state))
+                return
             if self.path == '/v1/formats':
                 if not self._authorized():
                     self.send_error(401)
@@ -169,6 +175,15 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     self.send_error(401)
                     return
                 self._route(lambda routes: routes.open_dataset(state, self._read_json()))
+                return
+            from flimkit_qupath_bridge import dataset_routes as _routes
+            fit_match = _routes.FIT_ROI_RE.match(self.path)
+            if fit_match:
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(
+                    lambda r: r.fit_rois(state, fit_match.group(1), self._read_json()))
                 return
             if self.path != '/v1/rois':
                 self.send_error(404)

@@ -130,3 +130,68 @@ def _crop(array, options):
             400,
             f'requested region {w}x{h} at ({x},{y}) falls outside {width}x{height}')
     return array[y:y + h, x:x + w]
+
+
+FIT_ROI_RE = re.compile(r'^/v1/datasets/([^/]+)/fit/roi$')
+
+
+def fit_defaults(state):
+    from flimkit_qupath_bridge import fitting
+    return fitting.defaults()
+
+
+def fit_rois(state, ident, payload):
+    from flimkit_qupath_bridge import fitting
+    registry = _registry(state)
+    try:
+        meta = registry.metadata(ident)
+    except KeyError:
+        raise RouteError(404, f'no such dataset: {ident}')
+    payload = payload or {}
+    collection = payload.get('rois')
+    if not isinstance(collection, dict) or collection.get('type') != 'FeatureCollection':
+        raise RouteError(400, 'rois must be a GeoJSON FeatureCollection')
+    try:
+        params = fitting.merge_params(payload.get('params'))
+    except ValueError as exc:
+        raise RouteError(400, str(exc))
+    binning = int(params['binning'])
+    try:
+        stack = registry.stack(ident, binning=binning)
+    except StackTooLarge as exc:
+        raise RouteError(413, str(exc))
+    try:
+        masks = fitting.masks_from_geojson(
+            collection, (meta['height'], meta['width']), binning=binning)
+    except Exception as exc:
+        raise RouteError(400, f'could not read the ROIs: {exc}')
+    if not masks:
+        raise RouteError(400, 'no usable regions in the payload')
+    irf = _session_irf(state, meta['path'])
+    results = []
+    for name, mask in masks:
+        try:
+            found = fitting.fit_masked_decay(
+                stack, mask, meta['tcspc_res'], meta['n_bins'], params,
+                irf_prompt=irf)
+        except ValueError as exc:
+            results.append({'name': name, 'error': str(exc)})
+            continue
+        found['name'] = name
+        results.append(found)
+    return {'dataset': ident, 'binning': binning, 'results': results,
+            'params_used': params}
+
+
+def _session_irf(state, path):
+    app = getattr(state, 'app', None)
+    if app is None:
+        return None
+    preview = getattr(app, '_fov_preview', None)
+    if preview is None:
+        return None
+    import os
+    open_path = getattr(preview, '_ptu_path', None)
+    if not open_path or os.path.realpath(open_path) != os.path.realpath(path):
+        return None
+    return getattr(preview, '_irf_prompt', None)
