@@ -12,10 +12,11 @@ def _machine_irf_dir():
 
 
 def available():
-    """The machine IRFs FLIMKit ships, plus any the user has added.
+    """Machine IRFs present on this install.
 
-    Generating a new one is FLIMKit's job, through
-    flimkit.FLIM.irf_tools.build_machine_irf_from_folder. This only lists what
+    A machine IRF is specific to one microscope, so none are distributed and a
+    fresh install has none until the user measures their own. Generating one is
+    FLIMKit's job, under Tools > Machine IRF Builder. This only lists what
     already exists so a client can offer a choice.
     """
     found = []
@@ -48,6 +49,10 @@ def _configured_default():
         return os.path.realpath(str(MACHINE_IRF_DEFAULT_PATH))
     except Exception:
         return ''
+
+
+def has_machine_irf():
+    return bool(available())
 
 
 def default_path():
@@ -89,7 +94,13 @@ def build(strategy, n_bins, tcspc_res, decay, path=None, session_irf=None,
     if strategy.startswith('machine_irf'):
         chosen = path or default_path()
         if not chosen:
-            raise ValueError('no machine IRF is available to load')
+            raise ValueError(
+                'no machine IRF is installed. A machine IRF describes your own '
+                'instrument, so it cannot be shipped with FLIMKit and has to be '
+                'measured on the microscope the data came from. Build one in '
+                'FLIMKit under Tools > Machine IRF Builder, or pick a different '
+                'strategy. Do not substitute a gaussian estimate for real work: '
+                'it will return lifetimes that look reasonable and are wrong.')
         if not os.path.exists(chosen):
             raise ValueError(f'no such machine IRF: {chosen}')
         prompt, description, *_ = machine_irf_prompt(

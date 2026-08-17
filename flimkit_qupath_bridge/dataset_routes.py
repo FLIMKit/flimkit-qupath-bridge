@@ -302,9 +302,14 @@ JOB_RE = re.compile(r'^/v1/jobs/([^/]+)$')
 
 def irfs(state):
     from flimkit_qupath_bridge import irf as irf_module
+    found = irf_module.available()
     return {'default': irf_module.default_path(),
             'strategies': list(irf_module.STRATEGIES),
-            'machine_irfs': irf_module.available()}
+            'has_machine_irf': bool(found),
+            'machine_irfs': found,
+            'note': ('A machine IRF describes one microscope and is not shipped '
+                     'with FLIMKit. Build one under Tools > Machine IRF Builder.')
+                    if not found else ''}
 
 
 def _jobs(state):

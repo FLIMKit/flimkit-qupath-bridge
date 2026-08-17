@@ -98,13 +98,14 @@ def test_a_correct_fit_has_reduced_chi_squared_near_one(truth):
 
 
 def test_mask_selects_only_its_pixels():
-    stack, _ = _synthetic_stack(shape=(4, 4))
+    stack, irf = _synthetic_stack(shape=(4, 4))
     mask = np.zeros((4, 4), dtype=bool)
     mask[0, 0] = True
 
     result = fitting.fit_masked_decay(
         stack, mask, tcspc_res=5e-11, n_bins=256,
-        params=fitting.merge_params({'n_exp': 1, 'irf_strategy': 'session'}))
+        params=fitting.merge_params({'n_exp': 1, 'irf_strategy': 'session'}),
+        irf_prompt=irf)
 
     assert result['n_pixels'] == 1
     assert result['photon_count'] == int(stack[0, 0].sum())

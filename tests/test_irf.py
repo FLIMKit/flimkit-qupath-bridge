@@ -94,10 +94,16 @@ def test_site_specific_irfs_are_still_offered():
 
 
 def test_a_missing_machine_irf_gives_a_clear_error(monkeypatch):
-    """An install from source has no machine IRF, because they are gitignored.
-    The failure has to name the problem rather than throw a file error."""
+    """A machine IRF is specific to one microscope, so none ship with FLIMKit
+    and a fresh install has none. The failure has to say how to make one."""
     monkeypatch.setattr(irf, 'available', lambda: [])
     monkeypatch.setattr(irf, 'default_path', lambda: None)
 
-    with pytest.raises(ValueError, match='no machine IRF is available'):
+    with pytest.raises(ValueError, match='no machine IRF is installed') as caught:
         irf.build('machine_irf', 256, 5e-11, _decay())
+
+    message = str(caught.value)
+    assert 'Machine IRF Builder' in message, 'the error must say how to fix it'
+    assert 'wrong' in message, (
+        'the error must warn against substituting a gaussian, which returns '
+        'plausible but incorrect lifetimes')
