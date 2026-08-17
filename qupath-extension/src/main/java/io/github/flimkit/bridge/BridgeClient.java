@@ -96,6 +96,47 @@ public class BridgeClient {
         return out.append('"').toString();
     }
 
+    public String openDataset(String path) throws IOException, InterruptedException {
+        String body = "{\"path\":" + quote(path) + "}";
+        var response = client.send(
+                request("/v1/datasets")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("POST datasets returned " + response.statusCode()
+                    + " for " + path);
+        return response.body();
+    }
+
+    public void closeDataset(String datasetId) throws IOException, InterruptedException {
+        client.send(
+                request("/v1/datasets/" + datasetId).DELETE().build(),
+                HttpResponse.BodyHandlers.discarding());
+    }
+
+    public String planes(String datasetId) throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/planes").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET planes returned " + response.statusCode());
+        return response.body();
+    }
+
+    public byte[] planeTiff(String datasetId, String plane, int x, int y, int w, int h)
+            throws IOException, InterruptedException {
+        String path = "/v1/datasets/" + datasetId + "/planes/" + plane + ".tif"
+                + "?x=" + x + "&y=" + y + "&w=" + w + "&h=" + h;
+        var response = client.send(
+                request(path).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() != 200)
+            throw new IOException("GET plane " + plane + " returned " + response.statusCode());
+        return response.body();
+    }
+
     public String fetchRois() throws IOException, InterruptedException {
         var response = client.send(
                 request("/v1/rois").GET().build(),
