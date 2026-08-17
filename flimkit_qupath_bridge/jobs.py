@@ -1,8 +1,8 @@
+import queue
 import threading
 import time
 import traceback
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 
 
 class Job:
@@ -55,8 +55,11 @@ class JobRegistry:
         self._lock = threading.RLock()
         self._jobs = OrderedDict()
         self._history = history
-        self._pool = ThreadPoolExecutor(max_workers=1,
-                                        thread_name_prefix='flimkit-bridge-job')
+        self._queue = queue.Queue()
+        self._stopping = threading.Event()
+        self._worker = threading.Thread(
+            target=self._serve, name='flimkit-bridge-job', daemon=True)
+        self._worker.start()
         self._next = 0
 
     def submit(self, kind, work, cancellable=True):
@@ -66,8 +69,20 @@ class JobRegistry:
             job = Job(job_id, kind, cancellable)
             self._jobs[job_id] = job
             self._trim()
-        self._pool.submit(self._run, job, work)
+        self._queue.put((job, work))
         return job_id
+
+    def _serve(self):
+        while not self._stopping.is_set():
+            try:
+                item = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            job, work = item
+            try:
+                self._run(job, work)
+            finally:
+                self._queue.task_done()
 
     def _trim(self):
         while len(self._jobs) > self._history:
@@ -148,4 +163,8 @@ class JobRegistry:
             return [job.snapshot() for job in self._jobs.values()]
 
     def shutdown(self):
-        self._pool.shutdown(wait=False, cancel_futures=True)
+        self._stopping.set()
+        with self._lock:
+            for job in self._jobs.values():
+                if job.state in ('queued', 'running'):
+                    job.cancel.set()
