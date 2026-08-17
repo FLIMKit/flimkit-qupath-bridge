@@ -31,24 +31,41 @@ class _FlimFileReader:
 
     def metadata(self):
         tags = getattr(self._file, 'tags', {}) or {}
+        width, height = self._dimensions(tags)
         pixel_size = tags.get('ImgHdr_PixResol') or tags.get('ImgHdr_PixRes') or 0
         return {
             'format': self._format,
             'modality': self._modality,
-            'n_x': int(self._file.n_x),
-            'n_y': int(self._file.n_y),
+            'n_x': width,
+            'n_y': height,
             'n_bins': int(self._file.n_bins),
             'tcspc_res': float(self._file.tcspc_res),
             'channels': self._active_channels(),
             'pixel_size_um': float(pixel_size) if pixel_size else None,
         }
 
+    def _dimensions(self, tags):
+        width, height = self._file.n_x, self._file.n_y
+        if width and height:
+            return int(width), int(height)
+        for x_key, y_key in (('BH_ImageX', 'BH_ImageY'),
+                             ('ImgHdr_PixX', 'ImgHdr_PixY')):
+            if tags.get(x_key) and tags.get(y_key):
+                return int(tags[x_key]), int(tags[y_key])
+        raise ValueError(
+            f'{self._format} reader does not report image dimensions for '
+            f'{self._file.path}; it may not be an image acquisition')
+
     def _active_channels(self):
         try:
             from flimkit.phasor_launcher import get_ptu_active_channels
-            return list(get_ptu_active_channels(self._file.path))
+            found = list(get_ptu_active_channels(self._file.path))
+            if found:
+                return found
         except Exception:
-            return []
+            pass
+        count = getattr(self._file, 'n_channels', None)
+        return list(range(int(count))) if count else []
 
     def raw_stack(self, channel, binning):
         return self._file.raw_pixel_stack(channel=channel, binning=binning)

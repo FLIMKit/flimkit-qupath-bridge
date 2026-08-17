@@ -58,6 +58,44 @@ public class BridgeClient {
         return new FetchedImage(imageId, file, unit);
     }
 
+    public String formats() throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/formats").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET formats returned " + response.statusCode());
+        return response.body();
+    }
+
+    public String identify(String path) throws IOException, InterruptedException {
+        String body = "{\"path\":" + quote(path) + "}";
+        var response = client.send(
+                request("/v1/identify")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("POST identify returned " + response.statusCode()
+                    + " for " + path);
+        return response.body();
+    }
+
+    static String quote(String value) {
+        StringBuilder out = new StringBuilder("\"");
+        for (char c : value.toCharArray()) {
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> out.append(c);
+            }
+        }
+        return out.append('"').toString();
+    }
+
     public String fetchRois() throws IOException, InterruptedException {
         var response = client.send(
                 request("/v1/rois").GET().build(),

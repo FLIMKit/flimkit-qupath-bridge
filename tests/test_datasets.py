@@ -190,10 +190,16 @@ def test_unknown_dataset_raises(registry):
 
 
 PTU_PATH = os.environ.get('FLIMKIT_TEST_PTU', '')
+SDT_PATH = os.environ.get('FLIMKIT_TEST_SDT', '')
 
 real_ptu = pytest.mark.skipif(
     not PTU_PATH or not Path(PTU_PATH).exists(),
     reason='set FLIMKIT_TEST_PTU to a .ptu file',
+)
+
+real_sdt = pytest.mark.skipif(
+    not SDT_PATH or not Path(SDT_PATH).exists(),
+    reason='set FLIMKIT_TEST_SDT to a .sdt file',
 )
 
 
@@ -226,3 +232,38 @@ def test_real_ptu_stack_is_uint32_and_binned():
     assert stack.shape == (meta['height'] // 4, meta['width'] // 4, meta['n_bins'])
     assert DatasetRegistry.infer_binning(
         (meta['height'], meta['width']), stack.shape[:2]) == 4
+
+
+@real_sdt
+def test_becker_hickl_sdt_reports_dimensions_without_decoding():
+    reg = DatasetRegistry()
+    ident = reg.open(SDT_PATH)
+
+    meta = reg.metadata(ident)
+
+    assert meta['format'] == 'bh_sdt'
+    assert meta['modality'] == 'time'
+    assert meta['width'] > 0 and meta['height'] > 0
+    assert meta['n_bins'] > 0
+    assert meta['channels']
+
+
+@real_sdt
+def test_sdt_dimensions_match_the_decoded_stack():
+    reg = DatasetRegistry()
+    ident = reg.open(SDT_PATH)
+    meta = reg.metadata(ident)
+
+    stack = reg.stack(ident, binning=8)
+
+    assert stack.dtype == np.uint32
+    assert DatasetRegistry.infer_binning(
+        (meta['height'], meta['width']), stack.shape[:2]) == 8
+
+
+@real_sdt
+def test_sdt_has_no_pixel_size_rather_than_a_bogus_zero():
+    reg = DatasetRegistry()
+    meta = reg.metadata(reg.open(SDT_PATH))
+
+    assert meta['pixel_size_um'] is None
