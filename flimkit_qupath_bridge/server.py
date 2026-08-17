@@ -177,6 +177,14 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                 self._route(lambda routes: routes.open_dataset(state, self._read_json()))
                 return
             from flimkit_qupath_bridge import dataset_routes as _routes
+            mask_match = _routes.PHASOR_MASK_RE.match(self.path)
+            if mask_match:
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(
+                    lambda r: r.phasor_mask(state, mask_match.group(1), self._read_json()))
+                return
             fit_match = _routes.FIT_ROI_RE.match(self.path)
             if fit_match:
                 if not self._authorized():
@@ -239,6 +247,20 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     self.send_error(401)
                     return True
                 self._send_plane(found.group(1), found.group(2), parsed.query)
+                return True
+            found = routes.PHASOR_POINTS_RE.match(parsed.path)
+            if found:
+                if not self._authorized():
+                    self.send_error(401)
+                    return True
+                self._route(lambda r: r.phasor_points(state, found.group(1), parsed.query))
+                return True
+            found = routes.PHASOR_RE.match(parsed.path)
+            if found:
+                if not self._authorized():
+                    self.send_error(401)
+                    return True
+                self._route(lambda r: r.phasor_summary(state, found.group(1)))
                 return True
             found = routes.PLANES_RE.match(parsed.path)
             if found:

@@ -195,3 +195,102 @@ def _session_irf(state, path):
     if not open_path or os.path.realpath(open_path) != os.path.realpath(path):
         return None
     return getattr(preview, '_irf_prompt', None)
+
+
+PHASOR_RE = re.compile(r'^/v1/datasets/([^/]+)/phasor$')
+PHASOR_POINTS_RE = re.compile(r'^/v1/datasets/([^/]+)/phasor/points$')
+PHASOR_MASK_RE = re.compile(r'^/v1/datasets/([^/]+)/phasor/mask$')
+
+
+def _phasor_state(state, ident):
+    from flimkit_qupath_bridge import phasor as phasor_module
+    registry = _registry(state)
+    try:
+        meta = registry.metadata(ident)
+    except KeyError:
+        raise RouteError(404, f'no such dataset: {ident}')
+    if meta['format'] != 'ptu':
+        raise RouteError(
+            409,
+            f"phasor is only available for PicoQuant PTU files, not {meta['format']}")
+    held = getattr(state, '_phasor_cache', None)
+    if held is None:
+        held = {}
+        state._phasor_cache = held
+    found = held.get(ident)
+    if found is None:
+        try:
+            found = phasor_module.compute(meta['path'], channel=meta['channel'])
+        except Exception as exc:
+            raise RouteError(500, f'phasor failed: {exc}')
+        found['binning'] = DatasetRegistryBinning(meta, found['real'].shape)
+        held[ident] = found
+    return meta, found
+
+
+def DatasetRegistryBinning(meta, phasor_shape):
+    from flimkit_qupath_bridge.datasets import DatasetRegistry
+    try:
+        return DatasetRegistry.infer_binning(
+            (meta['height'], meta['width']), phasor_shape)
+    except ValueError:
+        return None
+
+
+def phasor_summary(state, ident):
+    meta, found = _phasor_state(state, ident)
+    return {
+        'dataset': ident,
+        'width': int(found['real'].shape[1]),
+        'height': int(found['real'].shape[0]),
+        'binning': found['binning'],
+        'frequency_hz': found['frequency'],
+        'channel': found['channel'],
+        'calibrated': found['calibrated'],
+    }
+
+
+def phasor_points(state, ident, query):
+    from flimkit_qupath_bridge import phasor as phasor_module
+    options = parse_qs(query)
+    bins = int(options.get('bins', ['256'])[0])
+    if bins < 8 or bins > 1024:
+        raise RouteError(400, 'bins must be between 8 and 1024')
+    min_photons = float(options.get('min_photons', ['0.01'])[0])
+    _, found = _phasor_state(state, ident)
+    payload = phasor_module.density_payload(
+        found['real'], found['imag'], found['mean'],
+        bins=bins, min_photons=min_photons)
+    payload['dataset'] = ident
+    return payload
+
+
+def phasor_mask(state, ident, payload):
+    from flimkit_qupath_bridge import phasor as phasor_module
+    _, found = _phasor_state(state, ident)
+    payload = payload or {}
+    cursors = payload.get('cursors')
+    if not isinstance(cursors, list) or not cursors:
+        raise RouteError(400, 'cursors must be a non-empty list')
+    min_photons = float(payload.get('min_photons', 0.01))
+    try:
+        masks = phasor_module.cursor_masks(
+            found['real'], found['imag'], found['mean'], cursors, min_photons)
+    except ValueError as exc:
+        raise RouteError(400, str(exc))
+    counts = [
+        {'id': identifier, 'n_pixels': int(mask.sum())}
+        for identifier, mask in masks.items()
+    ]
+    if payload.get('output') == 'labels':
+        labels = phasor_module.label_image(
+            found['real'], found['imag'], found['mean'], cursors, min_photons)
+        return {'dataset': ident, 'binning': found['binning'],
+                'cursors': counts, 'labels': _encode_labels(labels),
+                'width': int(labels.shape[1]), 'height': int(labels.shape[0])}
+    return {'dataset': ident, 'binning': found['binning'], 'cursors': counts}
+
+
+def _encode_labels(labels):
+    import base64
+    return base64.b64encode(np.ascontiguousarray(labels).tobytes()).decode('ascii')
