@@ -8,7 +8,9 @@ Direct image and ROI exchange between [FLIMKit](https://github.com/FLIMKit/FLIMK
 
 v0.1.0. The transport, the ROI exchange in both directions and the project import are covered by tests, including against real FLIMKit sessions. The QuPath menu items and the FLIMKit button have not yet been driven by hand in a live session.
 
-It reuses the wire protocol from [flimkit-fiji-bridge](https://github.com/FLIMKit/flimkit-fiji-bridge) unchanged, so a client written against one works against the other. Beyond that the two have diverged: this one ships a QuPath extension that runs inside a live session, imports the FLIMKit images into the open project, and moves ROIs in both directions.
+The endpoint shapes come from [flimkit-fiji-bridge](https://github.com/FLIMKit/flimkit-fiji-bridge), where they were designed first. The two have since diverged and are not interchangeable: they report different protocol identifiers, and this one adds a discovery file for pairing and refuses requests whose `Host` header is not localhost.
+
+The bigger difference is on the other side. This one ships a QuPath extension that runs inside a live session, so it works with the image you have open and the annotations you have drawn, and it can add the FLIMKit images to the open project. The Fiji bridge drives Fiji through a Groovy script.
 
 ## Why QuPath as well as Fiji
 
