@@ -70,6 +70,9 @@ class _FlimFileReader:
     def raw_stack(self, channel, binning):
         return self._file.raw_pixel_stack(channel=channel, binning=binning)
 
+    def intensity(self, channel, binning):
+        return self._file.intensity_image(channel=channel, binning=binning)
+
 
 def _default_opener(path, channel):
     return _FlimFileReader(path, channel)
@@ -184,7 +187,7 @@ class DatasetRegistry:
             'channels': meta['channels'],
             'pixel_size_um': meta['pixel_size_um'],
             'estimated_stack_bytes': estimates,
-            'planes': [p['id'] for p in self.planes(ident)],
+            'planes': self.plane_names(ident),
         }
 
     def stack(self, ident, binning=1):
@@ -197,6 +200,29 @@ class DatasetRegistry:
             raise StackTooLarge(estimated, self._max_stack, suggest)
         with entry.lock:
             return entry.reader.raw_stack(entry.channel, binning)
+
+    def intensity(self, ident, binning=1):
+        name = 'intensity' if binning == 1 else f'intensity@{binning}'
+        held = self.plane(ident, name)
+        if held is not None:
+            return held
+        entry = self._entry(ident)
+        with entry.lock:
+            reader = entry.reader
+            if hasattr(reader, 'intensity'):
+                array = reader.intensity(entry.channel, binning)
+            else:
+                array = self.stack(ident, binning).sum(axis=2)
+        self.put_plane(ident, name, np.asarray(array), unit='photons')
+        return self.plane(ident, name)
+
+    def plane_names(self, ident):
+        entry = self._entry(ident)
+        with entry.lock:
+            held = [n for n in entry.planes if not n.startswith('intensity@')]
+        if 'intensity' not in held:
+            held.insert(0, 'intensity')
+        return held
 
     def put_plane(self, ident, name, array, unit=''):
         entry = self._entry(ident)

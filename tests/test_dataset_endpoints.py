@@ -1,0 +1,175 @@
+import json
+from io import BytesIO
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+import numpy as np
+import pytest
+import tifffile
+
+from flimkit_qupath_bridge.datasets import DatasetRegistry
+from flimkit_qupath_bridge.server import BridgeState
+
+from test_datasets import FakeReader
+
+
+@pytest.fixture
+def served(serve_state, tmp_path):
+    readers = {}
+    made = tmp_path / 'a.ptu'
+    made.write_bytes(b'not really a ptu')
+
+    def opener(path, channel):
+        return readers.setdefault(path, FakeReader(path, n_y=8, n_x=8, n_bins=16))
+
+    registry = DatasetRegistry(opener=opener)
+    state = BridgeState(images={})
+    state.datasets = registry
+    return serve_state(state), registry, str(made)
+
+
+def _call(url, path, method='GET', body=None, token='test-token'):
+    headers = {}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode('utf-8')
+        headers['Content-Type'] = 'application/json'
+    request = Request(f'{url}{path}', data=data, method=method, headers=headers)
+    with urlopen(request) as response:
+        raw = response.read()
+        return response.status, json.loads(raw) if raw else None, response.headers
+
+
+def test_open_returns_metadata(served):
+    url, _, path = served
+
+    status, payload, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    assert status == 200
+    assert payload['id'].startswith('ds_')
+    assert payload['width'] == 8 and payload['height'] == 8
+    assert payload['n_bins'] == 16
+    assert payload['estimated_stack_bytes']['1'] == 8 * 8 * 16 * 4
+
+
+def test_open_is_idempotent(served):
+    url, registry, path = served
+
+    _, first, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+    _, second, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    assert first['id'] == second['id']
+    assert registry.refcount(first['id']) == 2
+
+
+def test_list_and_fetch_and_close(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+    ident = opened['id']
+
+    _, listed, _ = _call(url, '/v1/datasets')
+    assert [d['id'] for d in listed['datasets']] == [ident]
+
+    _, fetched, _ = _call(url, f'/v1/datasets/{ident}')
+    assert fetched['id'] == ident
+
+    _, closed, _ = _call(url, f'/v1/datasets/{ident}', 'DELETE')
+    assert closed == {'closed': True}
+
+    _, listed, _ = _call(url, '/v1/datasets')
+    assert listed['datasets'] == []
+
+
+def test_open_missing_file_is_404(served):
+    url, _, _ = served
+    with pytest.raises(HTTPError) as caught:
+        _call(url, '/v1/datasets', 'POST', {'path': '/no/such/file.ptu'})
+    assert caught.value.code == 404
+
+
+def test_unknown_dataset_is_404(served):
+    url, _, _ = served
+    with pytest.raises(HTTPError) as caught:
+        _call(url, '/v1/datasets/ds_999')
+    assert caught.value.code == 404
+
+
+def test_datasets_require_a_token(served):
+    url, _, path = served
+    with pytest.raises(HTTPError) as caught:
+        _call(url, '/v1/datasets', 'POST', {'path': path}, token=None)
+    assert caught.value.code == 401
+
+
+def test_planes_lists_intensity(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    _, payload, _ = _call(url, f"/v1/datasets/{opened['id']}/planes")
+
+    ids = [p['id'] for p in payload['planes']]
+    assert 'intensity' in ids
+    entry = next(p for p in payload['planes'] if p['id'] == 'intensity')
+    assert entry['unit'] == 'photons'
+    assert entry['shape'] == [8, 8]
+
+
+def _plane(url, ident, name, query=''):
+    request = Request(
+        f'{url}/v1/datasets/{ident}/planes/{name}.tif{query}',
+        headers={'Authorization': 'Bearer test-token'},
+    )
+    with urlopen(request) as response:
+        return tifffile.imread(BytesIO(response.read())), response.headers
+
+
+def test_intensity_plane_is_served_as_uint16(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    array, headers = _plane(url, opened['id'], 'intensity')
+
+    assert array.shape == (8, 8)
+    assert array.dtype == np.uint16
+    assert headers['X-FLIMKit-Value-Unit'] == 'photons'
+    assert headers['X-FLIMKit-Plane-Binning'] == '1'
+    np.testing.assert_array_equal(array, np.full((8, 8), 16, dtype=np.uint16))
+
+
+def test_plane_sub_rectangle(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    array, _ = _plane(url, opened['id'], 'intensity', '?x=2&y=3&w=4&h=2')
+
+    assert array.shape == (2, 4)
+
+
+def test_plane_sub_rectangle_out_of_bounds_is_400(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    with pytest.raises(HTTPError) as caught:
+        _plane(url, opened['id'], 'intensity', '?x=0&y=0&w=99&h=99')
+    assert caught.value.code == 400
+
+
+def test_unknown_plane_is_404(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    with pytest.raises(HTTPError) as caught:
+        _plane(url, opened['id'], 'tau_mean_int')
+    assert caught.value.code == 404
+
+
+def test_binned_intensity_plane(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    array, headers = _plane(url, opened['id'], 'intensity', '?binning=2')
+
+    assert array.shape == (4, 4)
+    assert headers['X-FLIMKit-Plane-Binning'] == '2'

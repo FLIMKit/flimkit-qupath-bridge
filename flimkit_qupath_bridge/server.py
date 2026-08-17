@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
+from urllib.parse import urlparse
 
 import numpy as np
 import tifffile
@@ -38,6 +39,7 @@ class BridgeState:
     received_rois: list[dict] = field(default_factory=list)
     app: object = None
     connected: bool = False
+    datasets: object = None
 
 
 def _live_images(state):
@@ -98,6 +100,8 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     'protocol': 'flimkit-qupath',
                     'protocol_version': 1,
                 })
+                return
+            if self._dataset_get():
                 return
             if self.path == '/v1/formats':
                 if not self._authorized():
@@ -160,6 +164,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     return
                 self._identify()
                 return
+            if self.path == '/v1/datasets':
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(lambda routes: routes.open_dataset(state, self._read_json()))
+                return
             if self.path != '/v1/rois':
                 self.send_error(404)
                 return
@@ -185,6 +195,83 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
             self._send_json(200, {
                 'received_features': len(payload.get('features', [])),
             })
+
+        def do_DELETE(self):
+            if not self._local_only():
+                return
+            from flimkit_qupath_bridge import dataset_routes as routes
+            found = routes.DATASET_RE.match(self.path)
+            if not found:
+                self.send_error(404)
+                return
+            if not self._authorized():
+                self.send_error(401)
+                return
+            self._route(lambda r: r.close_dataset(state, found.group(1)))
+
+        def _dataset_get(self):
+            from flimkit_qupath_bridge import dataset_routes as routes
+            parsed = urlparse(self.path)
+            if parsed.path == '/v1/datasets':
+                if not self._authorized():
+                    self.send_error(401)
+                    return True
+                self._route(lambda r: r.list_datasets(state))
+                return True
+            found = routes.PLANE_RE.match(parsed.path)
+            if found:
+                if not self._authorized():
+                    self.send_error(401)
+                    return True
+                self._send_plane(found.group(1), found.group(2), parsed.query)
+                return True
+            found = routes.PLANES_RE.match(parsed.path)
+            if found:
+                if not self._authorized():
+                    self.send_error(401)
+                    return True
+                self._route(lambda r: r.planes(state, found.group(1)))
+                return True
+            found = routes.DATASET_RE.match(parsed.path)
+            if found:
+                if not self._authorized():
+                    self.send_error(401)
+                    return True
+                self._route(lambda r: r.dataset(state, found.group(1)))
+                return True
+            return False
+
+        def _send_plane(self, ident, name, query):
+            from flimkit_qupath_bridge import dataset_routes as routes
+            try:
+                body, unit, binning, shape = routes.plane_tiff(state, ident, name, query)
+            except routes.RouteError as problem:
+                self.send_error(problem.status, str(problem))
+                return
+            except Exception as exc:
+                self.send_error(500, str(exc))
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/tiff')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('X-FLIMKit-Value-Unit', unit)
+            self.send_header('X-FLIMKit-Plane', name)
+            self.send_header('X-FLIMKit-Plane-Binning', str(binning))
+            self.send_header('X-FLIMKit-Plane-Shape', f'{shape[0]},{shape[1]}')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _route(self, call):
+            from flimkit_qupath_bridge import dataset_routes as routes
+            from flimkit_qupath_bridge import formats
+            try:
+                self._send_json(200, call(routes))
+            except routes.RouteError as problem:
+                self.send_error(problem.status, str(problem))
+            except formats.PathProblem as problem:
+                self.send_error(problem.status, str(problem))
+            except Exception as exc:
+                self.send_error(500, str(exc))
 
         def _identify(self):
             from flimkit_qupath_bridge import formats
