@@ -71,8 +71,11 @@ def test_image_requires_token(running_server):
     assert caught.value.code == 401
 
 
-@pytest.mark.parametrize('image_id,unit', [('intensity', 'photons'), ('lifetime', 'ns')])
-def test_image_round_trips_with_unit(running_server, image_id, unit):
+@pytest.mark.parametrize('image_id,unit,dtype', [
+    ('intensity', 'photons', np.uint16),
+    ('lifetime', 'ns', np.float32),
+])
+def test_image_round_trips_with_unit(running_server, image_id, unit, dtype):
     base_url, state = running_server
     request = Request(
         f'{base_url}/v1/images/{image_id}.tif',
@@ -81,9 +84,9 @@ def test_image_round_trips_with_unit(running_server, image_id, unit):
     with urlopen(request) as response:
         received = tifffile.imread(BytesIO(response.read()))
         header_unit = response.headers['X-FLIMKit-Value-Unit']
-    assert received.dtype == np.float32
+    assert received.dtype == dtype
     assert header_unit == unit
-    np.testing.assert_array_equal(received, state.images[image_id])
+    np.testing.assert_array_equal(received, state.images[image_id].astype(dtype))
 
 
 def test_unknown_image_is_404(running_server):

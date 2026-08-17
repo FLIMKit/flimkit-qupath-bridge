@@ -49,7 +49,7 @@ def test_real_intensity_survives_the_trip(serve_state, verify_image, intensity_i
     height, width = intensity_image.shape
     assert int(reported['width']) == width
     assert int(reported['height']) == height
-    assert reported['type'] == 'FLOAT32'
+    assert reported['type'] == 'UINT16'
     assert reported['unit'] == 'photons'
     assert int(reported['nan']) == 0
     assert float(reported['max']) == pytest.approx(float(intensity_image.max()))

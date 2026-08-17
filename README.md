@@ -46,7 +46,7 @@ GPL-3.0. See [LICENSING.md](LICENSING.md).
 - Python 3.12 or newer.
 - The [QuPath alignment extension](https://github.com/qupath/qupath-extension-align), for co-registration.
 
-The alignment extension will not open 32-bit float images, and both FLIMKit maps are served as 32-bit float. Align on a 16-bit intensity image of the same field of view; the transform is valid for the FLIM images too, because they share the pixel grid.
+Align on the intensity image, not the lifetime map. Photon counts are integers, so intensity crosses as 16-bit whenever it fits losslessly, which the alignment extension can open. The lifetime map has to stay 32-bit float to carry real nanoseconds, and the alignment extension throws on 32-bit float rather than declining politely. The transform you get from the intensity image is valid for the lifetime map anyway, because they share one pixel grid.
 
 The alignment extension is not optional for the intended workflow and it does not ship with QuPath. QuPath 0.7.0 does not bundle interactive image alignment, and neither did 0.6.0, so it has to be downloaded and dropped into QuPath's extensions directory separately.
 

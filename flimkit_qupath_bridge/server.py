@@ -9,6 +9,23 @@ import numpy as np
 import tifffile
 
 
+UINT16_MAX = 65535
+
+
+def encode_image(image_id, image):
+    array = np.asarray(image)
+    if image_id != 'intensity':
+        return np.asarray(array, dtype=np.float32)
+    if not np.isfinite(array).all():
+        return np.asarray(array, dtype=np.float32)
+    if array.min() < 0 or array.max() > UINT16_MAX:
+        return np.asarray(array, dtype=np.float32)
+    rounded = np.rint(array)
+    if not np.array_equal(rounded, array):
+        return np.asarray(array, dtype=np.float32)
+    return rounded.astype(np.uint16)
+
+
 def _empty_collection():
     return {'type': 'FeatureCollection', 'features': []}
 
@@ -112,7 +129,7 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     self.send_error(404)
                     return
                 buffer = BytesIO()
-                tifffile.imwrite(buffer, np.asarray(image, dtype=np.float32))
+                tifffile.imwrite(buffer, encode_image(image_id, image))
                 body = buffer.getvalue()
                 self.send_response(200)
                 self.send_header('Content-Type', 'image/tiff')
