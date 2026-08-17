@@ -59,6 +59,8 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                 null,
                 menuItem("Add FLIMKit images to project", () -> addImages(qupath)),
                 null,
+                menuItem("Fit ROI decays...", () -> fitRois(qupath)),
+                null,
                 menuItem("Send annotations to FLIMKit", () -> sendAnnotations(qupath)),
                 menuItem("Fetch ROIs from FLIMKit", () -> fetchAnnotations(qupath)));
     }
@@ -149,6 +151,54 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         if (!skipped.isEmpty())
             message += "\nNot available: " + String.join(", ", skipped);
         Dialogs.showInfoNotification(getName(), message);
+    }
+
+    private void fitRois(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(getName(), "No image is open.");
+            return;
+        }
+        var server = imageData.getServer();
+        if (!(server instanceof FlimKitImageServer bridged)) {
+            Dialogs.showErrorMessage(getName(),
+                    "This image was not opened through the FLIMKit bridge, so "
+                            + "FLIMKit has no decay data for it.\n\n"
+                            + "Open the FLIM file itself with File > Open.");
+            return;
+        }
+        var selected = new ArrayList<>(
+                imageData.getHierarchy().getSelectionModel().getSelectedObjects());
+        selected.removeIf(o -> !o.isAnnotation());
+        if (selected.isEmpty())
+            selected.addAll(imageData.getHierarchy().getAnnotationObjects());
+        if (selected.isEmpty()) {
+            Dialogs.showErrorMessage(getName(), "Draw an annotation first.");
+            return;
+        }
+        try {
+            var client = new BridgeClient(baseUrl, token);
+            var defaults = JsonParser.parseString(client.fitDefaults()).getAsJsonObject();
+            var chosen = new FitDialog(defaults).prompt("Fit ROI decays", "roi");
+            if (chosen == null)
+                return;
+            var body = new JsonObject();
+            body.add("params", chosen);
+            body.add("rois", JsonParser.parseString(toFeatureCollection(selected)));
+            var reply = JsonParser.parseString(
+                    client.fitRois(bridged.getDatasetId(), body.toString()))
+                    .getAsJsonObject();
+            int applied = FitResults.applyToObjects(reply, selected);
+            imageData.getHierarchy().fireObjectMeasurementsChangedEvent(this, selected);
+            var failures = FitResults.errors(reply);
+            String message = "Fitted " + applied + " region(s)";
+            if (!failures.isEmpty())
+                message += "\n\nNot fitted:\n" + String.join("\n", failures);
+            Dialogs.showInfoNotification(getName(), message);
+        } catch (Exception e) {
+            logger.error("ROI fitting failed", e);
+            Dialogs.showErrorMessage(getName(), "Could not fit\n\n" + e.getMessage());
+        }
     }
 
     private void sendAnnotations(QuPathGUI qupath) {

@@ -137,6 +137,29 @@ public class BridgeClient {
         return response.body();
     }
 
+    public String fitDefaults() throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/fit/defaults").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET fit defaults returned " + response.statusCode());
+        return response.body();
+    }
+
+    public String fitRois(String datasetId, String body)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/fit/roi")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("POST fit/roi returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
     public String fetchRois() throws IOException, InterruptedException {
         var response = client.send(
                 request("/v1/rois").GET().build(),
