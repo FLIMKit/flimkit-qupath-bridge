@@ -156,3 +156,68 @@ def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
         'irf_source': irf_source,
         'n_exp': int(params['n_exp']),
     }
+
+
+def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
+               progress=None, cancel=None):
+    """Runs fit_per_pixel over row bands.
+
+    The GPU backends accept a progress_callback and never call it, so a single
+    call reports nothing and cannot be interrupted. Banding gives a progress
+    tick and a cancellation point per band on every backend, and caps peak
+    memory. global_popt is fitted once over the whole field so the bands stay
+    independent of each other.
+    """
+    from flimkit.FLIM.fitters import fit_per_pixel, fit_summed
+    stack = np.asarray(stack)
+    height = stack.shape[0]
+    bands = max(1, min(int(bands), height))
+    summed = stack.reshape(-1, stack.shape[2]).sum(axis=0).astype(float)
+    irf, irf_source = build_irf(n_bins, tcspc_res, summed, cached=irf_prompt)
+    global_popt, summary = fit_summed(
+        summed, tcspc_res, n_bins, irf,
+        False, bool(params['fit_bg']), bool(params['fit_sigma']),
+        int(params['n_exp']),
+        float(params['tau_min_ns']),
+        float(params['tau_max_ns']),
+        cost_function=params['cost_function'],
+    )
+    edges = np.linspace(0, height, bands + 1).astype(int)
+    collected = []
+    for index in range(bands):
+        if cancel is not None and cancel.is_set():
+            return None
+        start, stop = edges[index], edges[index + 1]
+        if start == stop:
+            continue
+        maps = fit_per_pixel(
+            stack[start:stop], tcspc_res, n_bins, irf,
+            False, bool(params['fit_bg']), bool(params['fit_sigma']),
+            global_popt, int(params['n_exp']),
+            min_photons=int(params['min_photons']),
+            tau_min_ns=float(params['tau_min_ns']),
+            tau_max_ns=float(params['tau_max_ns']),
+            fit_idx=summary.get('fit_idx'),
+            use_gpu=False,
+        )
+        collected.append(maps)
+        if progress is not None:
+            progress(index + 1, bands, f'band {index + 1} of {bands}')
+    if not collected:
+        return None
+    merged = {}
+    for name in collected[0]:
+        pieces = [part[name] for part in collected]
+        merged[name] = np.concatenate(pieces, axis=0)
+    return {
+        'maps': merged,
+        'global': {
+            'taus_ns': [float(t) for t in summary['taus_ns']],
+            'amps': [float(a) for a in summary['amps']],
+            'fractions': [float(f) for f in summary['fractions']],
+            'chi2_r': float(summary['reduced_chi2']),
+            'irf_source': irf_source,
+            'n_exp': int(params['n_exp']),
+        },
+        'bands': bands,
+    }
