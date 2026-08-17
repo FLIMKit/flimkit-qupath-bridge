@@ -119,7 +119,9 @@ def test_stacks_are_not_retained(registry):
     reg.stack(ident, binning=1)
     reg.stack(ident, binning=1)
 
-    assert readers['/data/a.ptu'].decodes == 2
+    assert len(readers) == 1
+    reader = next(iter(readers.values()))
+    assert reader.decodes == 2
 
 
 def test_planes_are_cached_and_evicted_by_budget(registry):
