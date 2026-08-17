@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import dataclass, field
 import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -158,6 +159,7 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
     class Server(ThreadingHTTPServer):
         daemon_threads = True
         block_on_close = False
+        allow_reuse_address = os.name != 'nt'
 
         def server_bind(self):
             socketserver.TCPServer.server_bind(self)
