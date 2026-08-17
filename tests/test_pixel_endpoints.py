@@ -56,21 +56,25 @@ def test_irfs_are_listed(served):
 
     payload = _call(url, '/v1/irfs')
 
-    assert payload['machine_irfs'], 'no machine IRF was offered'
     assert 'machine_irf' in payload['strategies']
-    assert payload['default'].endswith('.npy')
+    assert 'session' in payload['strategies']
+    if payload['machine_irfs']:
+        assert payload['default'].endswith('.npy')
 
 
 def test_a_whole_fov_fit_runs_and_produces_planes(served):
     url, _ = served
     opened = _call(url, '/v1/datasets', 'POST', {'path': PTU_PATH})
 
+    from flimkit_qupath_bridge import irf as irf_module
+    strategy = 'machine_irf' if irf_module.available() else 'gaussian'
     started = _call(url, f"/v1/datasets/{opened['id']}/fit/pixels", 'POST',
                     {'params': {'n_exp': 1, 'binning': 8, 'min_photons': 5,
-                                'tau_min_ns': 0.2, 'tau_max_ns': 8.0}})
+                                'tau_min_ns': 0.2, 'tau_max_ns': 8.0,
+                                'irf_strategy': strategy}})
 
     assert started['job'].startswith('job_')
-    assert started['params_used']['irf_strategy'] == 'machine_irf'
+    assert started['params_used']['irf_strategy'] == strategy
     assert started['estimated_stack_bytes'] > 0
 
     status = _await(url, started['job'])
@@ -91,8 +95,11 @@ def test_a_running_job_can_be_cancelled(served):
     url, _ = served
     opened = _call(url, '/v1/datasets', 'POST', {'path': PTU_PATH})
 
+    from flimkit_qupath_bridge import irf as irf_module
     started = _call(url, f"/v1/datasets/{opened['id']}/fit/pixels", 'POST',
-                    {'params': {'n_exp': 2, 'binning': 2, 'min_photons': 5}})
+                    {'params': {'n_exp': 2, 'binning': 2, 'min_photons': 5,
+                                'irf_strategy': 'machine_irf'
+                                if irf_module.available() else 'gaussian'}})
     _call(url, f"/v1/jobs/{started['job']}", 'DELETE')
 
     status = _await(url, started['job'])

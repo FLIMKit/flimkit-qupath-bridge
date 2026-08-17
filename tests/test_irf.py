@@ -3,20 +3,27 @@ import pytest
 
 from flimkit_qupath_bridge import irf
 
+needs_machine_irf = pytest.mark.skipif(
+    not irf.available(),
+    reason='this FLIMKit install ships no machine IRF; they are gitignored, so '
+           'an install from source has none')
+
 
 def _decay(n_bins=256):
     t = np.arange(n_bins)
     return np.exp(-(t - 30) ** 2 / 50.0) * 1000 + 1.0
 
 
-def test_flimkit_ships_at_least_one_machine_irf():
+@needs_machine_irf
+def test_machine_irfs_are_discovered_when_present():
     found = irf.available()
 
-    assert found, 'FLIMKit ships no machine IRF'
+    assert found
     assert all(entry['path'].endswith('.npy') for entry in found)
     assert irf.default_path() is not None
 
 
+@needs_machine_irf
 def test_a_machine_irf_can_be_built():
     prompt, description = irf.build('machine_irf', 256, 5e-11, _decay())
 
@@ -58,6 +65,7 @@ def test_a_missing_scatter_file_is_refused():
         irf.build('scatter_file', 256, 5e-11, _decay(), path='/no/such/file.ptu')
 
 
+@needs_machine_irf
 def test_the_default_is_flimkits_configured_one_not_alphabetical():
     """FLIMKit ships several machine IRFs and configures which is the default,
     including a user override. Picking the alphabetically first one would give
@@ -71,13 +79,25 @@ def test_the_default_is_flimkits_configured_one_not_alphabetical():
     assert 'default' in os.path.basename(chosen)
 
 
+@needs_machine_irf
 def test_exactly_one_machine_irf_is_flagged_as_default():
     flagged = [entry for entry in irf.available() if entry['default']]
 
     assert len(flagged) == 1
 
 
+@needs_machine_irf
 def test_site_specific_irfs_are_still_offered():
     ids = {entry['id'] for entry in irf.available()}
 
     assert len(ids) > 1, 'only one machine IRF was offered'
+
+
+def test_a_missing_machine_irf_gives_a_clear_error(monkeypatch):
+    """An install from source has no machine IRF, because they are gitignored.
+    The failure has to name the problem rather than throw a file error."""
+    monkeypatch.setattr(irf, 'available', lambda: [])
+    monkeypatch.setattr(irf, 'default_path', lambda: None)
+
+    with pytest.raises(ValueError, match='no machine IRF is available'):
+        irf.build('machine_irf', 256, 5e-11, _decay())
