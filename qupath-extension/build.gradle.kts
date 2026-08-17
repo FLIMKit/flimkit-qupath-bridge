@@ -6,7 +6,7 @@ plugins {
 qupathExtension {
     name = "qupath-extension-flimkit-bridge"
     group = "io.github.flimkit"
-    version = "0.1.0"
+    version = "0.1.1"
     description = "Direct image and ROI exchange between FLIMKit and QuPath"
     automaticModule = "io.github.flimkit.bridge"
 }

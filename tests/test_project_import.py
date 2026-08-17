@@ -8,11 +8,12 @@ import pytest
 from flimkit_qupath_bridge.server import BridgeState
 
 QUPATH_PATH = os.environ.get('QUPATH_PATH', '')
-EXTENSION_JAR = Path.home() / 'QuPath' / 'v0.7' / 'extensions' / \
-    'qupath-extension-flimkit-bridge-0.1.0.jar'
+EXTENSION_JARS = sorted(
+    (Path.home() / 'QuPath' / 'v0.7' / 'extensions').glob(
+        'qupath-extension-flimkit-bridge-*.jar'))
 
 pytestmark = pytest.mark.skipif(
-    not QUPATH_PATH or not EXTENSION_JAR.exists(),
+    not QUPATH_PATH or not EXTENSION_JARS,
     reason='needs QUPATH_PATH and the extension installed in QuPath',
 )
 

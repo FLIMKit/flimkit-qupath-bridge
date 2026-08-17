@@ -6,7 +6,7 @@ Direct image and ROI exchange between [FLIMKit](https://github.com/FLIMKit/FLIMK
 
 ## Status
 
-v0.1.0. The transport, the ROI exchange in both directions and the project import are covered by tests, including against real FLIMKit sessions. The QuPath menu items and the FLIMKit button have not yet been driven by hand in a live session.
+v0.1.1. Used end to end against real FLIMKit sessions on a Leica SP8 FALCON: images and ROIs move in both directions, the FLIMKit images open in a QuPath project, and co-registration works through the alignment extension.
 
 The endpoint shapes come from [flimkit-fiji-bridge](https://github.com/FLIMKit/flimkit-fiji-bridge), where they were designed first. The two have since diverged and are not interchangeable: they report different protocol identifiers, and this one adds a discovery file for pairing and refuses requests whose `Host` header is not localhost.
 
