@@ -12,7 +12,8 @@ def _stack(tau_ns=2.0, shape=(8, 8)):
 def test_banded_and_unbanded_agree():
     stack, irf = _stack(shape=(8, 8))
     params = fitting.merge_params({'n_exp': 1, 'tau_min_ns': 0.05,
-                                   'tau_max_ns': 10.0, 'min_photons': 1})
+                                   'tau_max_ns': 10.0, 'min_photons': 1,
+                                   'irf_strategy': 'session'})
 
     single = fitting.fit_pixels(stack, 5e-11, 256, params, irf_prompt=irf, bands=1)
     banded = fitting.fit_pixels(stack, 5e-11, 256, params, irf_prompt=irf, bands=4)
@@ -27,7 +28,8 @@ def test_banded_and_unbanded_agree():
 
 def test_maps_have_the_stack_shape():
     stack, irf = _stack(shape=(8, 8))
-    params = fitting.merge_params({'n_exp': 1, 'min_photons': 1})
+    params = fitting.merge_params({'n_exp': 1, 'min_photons': 1,
+                                   'irf_strategy': 'session'})
 
     found = fitting.fit_pixels(stack, 5e-11, 256, params, irf_prompt=irf, bands=2)
 
@@ -38,7 +40,8 @@ def test_maps_have_the_stack_shape():
 def test_recovered_lifetime_is_right_and_well_fitted():
     stack, irf = _stack(tau_ns=2.0, shape=(8, 8))
     params = fitting.merge_params({'n_exp': 1, 'tau_min_ns': 0.05,
-                                   'tau_max_ns': 10.0, 'min_photons': 1})
+                                   'tau_max_ns': 10.0, 'min_photons': 1,
+                                   'irf_strategy': 'session'})
 
     found = fitting.fit_pixels(stack, 5e-11, 256, params, irf_prompt=irf, bands=2)
 
@@ -54,7 +57,8 @@ def test_recovered_lifetime_is_right_and_well_fitted():
 
 def test_progress_reaches_the_end():
     stack, irf = _stack(shape=(8, 8))
-    params = fitting.merge_params({'n_exp': 1, 'min_photons': 1})
+    params = fitting.merge_params({'n_exp': 1, 'min_photons': 1,
+                                   'irf_strategy': 'session'})
     seen = []
 
     fitting.fit_pixels(stack, 5e-11, 256, params, irf_prompt=irf, bands=4,
@@ -68,7 +72,8 @@ def test_progress_reaches_the_end():
 def test_cancelling_stops_between_bands():
     import threading
     stack, irf = _stack(shape=(8, 8))
-    params = fitting.merge_params({'n_exp': 1, 'min_photons': 1})
+    params = fitting.merge_params({'n_exp': 1, 'min_photons': 1,
+                                   'irf_strategy': 'session'})
     cancel = threading.Event()
     cancel.set()
 
@@ -80,7 +85,8 @@ def test_cancelling_stops_between_bands():
 
 def test_band_count_is_clamped_to_the_rows():
     stack, irf = _stack(shape=(4, 4))
-    params = fitting.merge_params({'n_exp': 1, 'min_photons': 1})
+    params = fitting.merge_params({'n_exp': 1, 'min_photons': 1,
+                                   'irf_strategy': 'session'})
 
     found = fitting.fit_pixels(stack, 5e-11, 256, params, irf_prompt=irf, bands=99)
 

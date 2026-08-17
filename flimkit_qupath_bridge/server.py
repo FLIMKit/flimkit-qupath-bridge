@@ -40,6 +40,7 @@ class BridgeState:
     app: object = None
     connected: bool = False
     datasets: object = None
+    jobs: object = None
 
 
 def _live_images(state):
@@ -102,6 +103,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                 })
                 return
             if self._dataset_get():
+                return
+            if self.path == '/v1/irfs':
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(lambda r: r.irfs(state))
                 return
             if self.path == '/v1/fit/defaults':
                 if not self._authorized():
@@ -177,6 +184,14 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                 self._route(lambda routes: routes.open_dataset(state, self._read_json()))
                 return
             from flimkit_qupath_bridge import dataset_routes as _routes
+            pixels_match = _routes.FIT_PIXELS_RE.match(self.path)
+            if pixels_match:
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(
+                    lambda r: r.fit_pixels(state, pixels_match.group(1), self._read_json()))
+                return
             mask_match = _routes.PHASOR_MASK_RE.match(self.path)
             if mask_match:
                 if not self._authorized():
@@ -223,6 +238,13 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
             if not self._local_only():
                 return
             from flimkit_qupath_bridge import dataset_routes as routes
+            job = routes.JOB_RE.match(self.path)
+            if job:
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(lambda r: r.job_cancel(state, job.group(1)))
+                return
             found = routes.DATASET_RE.match(self.path)
             if not found:
                 self.send_error(404)
@@ -247,6 +269,16 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     self.send_error(401)
                     return True
                 self._send_plane(found.group(1), found.group(2), parsed.query)
+                return True
+            found = routes.JOB_RE.match(parsed.path)
+            if found:
+                if not self._authorized():
+                    self.send_error(401)
+                    return True
+                if parsed.query == 'result':
+                    self._route(lambda r: r.job_result(state, found.group(1)))
+                else:
+                    self._route(lambda r: r.job_status(state, found.group(1)))
                 return True
             found = routes.PHASOR_POINTS_RE.match(parsed.path)
             if found:

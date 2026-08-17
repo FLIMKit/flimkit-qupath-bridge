@@ -294,3 +294,104 @@ def phasor_mask(state, ident, payload):
 def _encode_labels(labels):
     import base64
     return base64.b64encode(np.ascontiguousarray(labels).tobytes()).decode('ascii')
+
+
+FIT_PIXELS_RE = re.compile(r'^/v1/datasets/([^/]+)/fit/pixels$')
+JOB_RE = re.compile(r'^/v1/jobs/([^/]+)$')
+
+
+def irfs(state):
+    from flimkit_qupath_bridge import irf as irf_module
+    return {'default': irf_module.default_path(),
+            'strategies': list(irf_module.STRATEGIES),
+            'machine_irfs': irf_module.available()}
+
+
+def _jobs(state):
+    registry = getattr(state, 'jobs', None)
+    if registry is None:
+        raise RouteError(503, 'this FLIMKit has no job registry')
+    return registry
+
+
+def fit_pixels(state, ident, payload):
+    from flimkit_qupath_bridge import fitting
+    registry = _registry(state)
+    jobs = _jobs(state)
+    try:
+        meta = registry.metadata(ident)
+    except KeyError:
+        raise RouteError(404, f'no such dataset: {ident}')
+    try:
+        params = fitting.merge_params((payload or {}).get('params'))
+    except ValueError as exc:
+        raise RouteError(400, str(exc))
+    binning = int(params['binning'])
+    estimated = registry.estimated_stack_bytes(ident, binning)
+    irf_prompt = _session_irf(state, meta['path'])
+
+    def work(progress, cancel):
+        stack = registry.stack(ident, binning=binning)
+        found = fitting.fit_pixels(
+            stack, meta['tcspc_res'], meta['n_bins'], params,
+            irf_prompt=irf_prompt, bands=8, progress=progress, cancel=cancel)
+        if found is None:
+            return None
+        for name, array in found['maps'].items():
+            registry.put_plane(ident, name, array,
+                               unit='ns' if 'tau' in name else '')
+        wrote_back = _write_back(state, meta['path'], found['maps'])
+        return {
+            'dataset': ident,
+            'binning': binning,
+            'planes': sorted(found['maps']),
+            'global': found['global'],
+            'wrote_back': wrote_back,
+        }
+
+    job_id = jobs.submit('fit_pixels', work)
+    return {'job': job_id, 'dataset': ident, 'params_used': params,
+            'estimated_stack_bytes': estimated}
+
+
+def _write_back(state, path, maps):
+    import os
+    app = getattr(state, 'app', None)
+    if app is None:
+        return False
+    preview = getattr(app, '_fov_preview', None)
+    if preview is None:
+        return False
+    open_path = getattr(preview, '_ptu_path', None)
+    if not open_path or os.path.realpath(open_path) != os.path.realpath(path):
+        return False
+    try:
+        preview._pixel_maps = dict(maps)
+        for candidate in ('tau_mean_int', 'tau_mean_amp', 'tau_1'):
+            if candidate in maps:
+                preview._lifetime_map = maps[candidate]
+                break
+    except Exception:
+        return False
+    return True
+
+
+def job_status(state, job_id):
+    try:
+        return _jobs(state).status(job_id)
+    except KeyError:
+        raise RouteError(404, f'no such job: {job_id}')
+
+
+def job_result(state, job_id):
+    jobs = _jobs(state)
+    try:
+        return {'result': jobs.result(job_id)}
+    except KeyError:
+        raise RouteError(404, f'no such job: {job_id}')
+    except ValueError as exc:
+        raise RouteError(409, str(exc))
+
+
+def job_cancel(state, job_id):
+    return {'cancelled': _jobs(state).cancel(job_id)}

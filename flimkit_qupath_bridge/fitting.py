@@ -12,9 +12,19 @@ SCHEMA = (
     {'key': 'binning', 'label': 'Binning', 'type': 'choice',
      'choices': (1, 2, 4, 8), 'applies_to': ('roi', 'per_pixel'),
      'advanced': False, 'default': 1},
-    {'key': 'min_photons', 'label': 'Minimum photons', 'type': 'int',
-     'min': 0, 'max': 100000, 'applies_to': ('per_pixel',),
-     'advanced': False, 'default': 10},
+    {'key': 'min_photons', 'label': 'Minimum photons per pixel', 'type': 'int',
+     'min': 0, 'max': 100000, 'applies_to': ('roi', 'per_pixel'),
+     'advanced': False, 'default': 5},
+    {'key': 'irf_strategy', 'label': 'Instrument response', 'type': 'choice',
+     'choices': ('machine_irf', 'machine_irf_sigma_full', 'machine_irf_sigma_half',
+                 'session', 'gaussian', 'scatter_file', 'pck'),
+     'applies_to': ('roi', 'per_pixel'), 'advanced': False,
+     'default': 'machine_irf'},
+    {'key': 'irf_path', 'label': 'IRF file', 'type': 'path',
+     'applies_to': ('roi', 'per_pixel'), 'advanced': False, 'default': ''},
+    {'key': 'irf_fwhm_ns', 'label': 'Gaussian IRF FWHM (ns)', 'type': 'float',
+     'min': 0.01, 'max': 5.0, 'applies_to': ('roi', 'per_pixel'),
+     'advanced': True, 'default': 0.2},
     {'key': 'channel', 'label': 'Channel', 'type': 'int', 'min': 0, 'max': 16,
      'applies_to': ('roi', 'per_pixel'), 'advanced': False, 'default': 0},
     {'key': 'cost_function', 'label': 'Cost function', 'type': 'choice',
@@ -67,6 +77,8 @@ def _validate(merged, known):
             value = float(value)
         elif entry['type'] == 'bool':
             value = bool(value)
+        elif entry['type'] == 'path':
+            value = str(value or '')
         elif entry['type'] == 'choice' and value not in entry['choices']:
             raise ValueError(
                 f'{key} must be one of {list(entry["choices"])}, got {value!r}')
@@ -110,13 +122,17 @@ def _scale_collection(collection, binning):
     return scaled
 
 
-def build_irf(n_bins, tcspc_res, decay, cached=None):
-    from flimkit.FLIM.irf_tools import gaussian_irf
-    if cached is not None and len(cached) == n_bins:
-        return np.asarray(cached, dtype=float), 'flimkit session'
-    peak = int(np.argmax(decay))
-    fwhm_bins = max(1.0, 0.2e-9 / tcspc_res)
-    return gaussian_irf(n_bins, peak, fwhm_bins), 'gaussian estimate'
+def build_irf(n_bins, tcspc_res, decay, cached=None, params=None):
+    from flimkit_qupath_bridge import irf as irf_module
+    params = params or {}
+    strategy = params.get('irf_strategy', 'machine_irf')
+    if strategy == 'session' and cached is None:
+        strategy = 'machine_irf'
+    return irf_module.build(
+        strategy, n_bins, tcspc_res, decay,
+        path=(params.get('irf_path') or None),
+        session_irf=cached,
+        fwhm_ns=params.get('irf_fwhm_ns', 0.2))
 
 
 def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
@@ -128,8 +144,15 @@ def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
             f'mask shape {mask.shape} does not match stack shape {stack.shape[:2]}')
     if not mask.any():
         raise ValueError('the region selects no pixels')
+    if int(params.get('min_photons', 0)):
+        bright = stack.sum(axis=2) >= int(params['min_photons'])
+        mask = mask & bright
+        if not mask.any():
+            raise ValueError(
+                'no pixels in the region reach the minimum photon count')
     decay = stack[mask].sum(axis=0).astype(float)
-    irf, irf_source = build_irf(n_bins, tcspc_res, decay, cached=irf_prompt)
+    irf, irf_source = build_irf(n_bins, tcspc_res, decay, cached=irf_prompt,
+                                params=params)
     popt, summary = fit_summed(
         decay, tcspc_res, n_bins, irf,
         False, bool(params['fit_bg']), bool(params['fit_sigma']),
@@ -173,7 +196,8 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
     height = stack.shape[0]
     bands = max(1, min(int(bands), height))
     summed = stack.reshape(-1, stack.shape[2]).sum(axis=0).astype(float)
-    irf, irf_source = build_irf(n_bins, tcspc_res, summed, cached=irf_prompt)
+    irf, irf_source = build_irf(n_bins, tcspc_res, summed, cached=irf_prompt,
+                                params=params)
     global_popt, summary = fit_summed(
         summed, tcspc_res, n_bins, irf,
         False, bool(params['fit_bg']), bool(params['fit_sigma']),

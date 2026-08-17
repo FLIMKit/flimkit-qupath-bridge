@@ -33,7 +33,7 @@ def test_defaults_have_values_and_a_schema():
     assert {'n_exp', 'tau_min_ns', 'tau_max_ns', 'cost_function'} <= keys
     for entry in payload['schema']:
         assert entry['key'] in payload['values']
-        assert entry['type'] in ('int', 'float', 'choice', 'bool')
+        assert entry['type'] in ('int', 'float', 'choice', 'bool', 'path')
         assert entry['applies_to']
 
 
@@ -68,7 +68,8 @@ def test_a_known_single_exponential_is_recovered(truth):
     result = fitting.fit_masked_decay(
         stack, mask, tcspc_res=5e-11, n_bins=256,
         params=fitting.merge_params({'n_exp': 1, 'tau_min_ns': 0.05,
-                                     'tau_max_ns': 10.0}),
+                                     'tau_max_ns': 10.0,
+                                     'irf_strategy': 'session'}),
         irf_prompt=irf)
 
     assert result['taus_ns'][0] == pytest.approx(truth, rel=0.02)
@@ -87,7 +88,8 @@ def test_a_correct_fit_has_reduced_chi_squared_near_one(truth):
         stack, np.ones(stack.shape[:2], dtype=bool), tcspc_res=5e-11,
         n_bins=256,
         params=fitting.merge_params({'n_exp': 1, 'tau_min_ns': 0.05,
-                                     'tau_max_ns': 10.0}),
+                                     'tau_max_ns': 10.0,
+                                     'irf_strategy': 'session'}),
         irf_prompt=irf)
 
     assert 0.5 < result['chi2_r'] < 2.0, (
@@ -102,7 +104,7 @@ def test_mask_selects_only_its_pixels():
 
     result = fitting.fit_masked_decay(
         stack, mask, tcspc_res=5e-11, n_bins=256,
-        params=fitting.merge_params({'n_exp': 1}))
+        params=fitting.merge_params({'n_exp': 1, 'irf_strategy': 'session'}))
 
     assert result['n_pixels'] == 1
     assert result['photon_count'] == int(stack[0, 0].sum())
@@ -114,7 +116,7 @@ def test_an_empty_mask_is_refused():
     with pytest.raises(ValueError, match='no pixels'):
         fitting.fit_masked_decay(
             stack, np.zeros((4, 4), dtype=bool), tcspc_res=5e-11,
-            n_bins=256, params=fitting.merge_params({}))
+            n_bins=256, params=fitting.merge_params({'irf_strategy': 'session'}))
 
 
 def test_mask_shape_must_match_the_stack():
@@ -123,7 +125,7 @@ def test_mask_shape_must_match_the_stack():
     with pytest.raises(ValueError, match='does not match'):
         fitting.fit_masked_decay(
             stack, np.ones((8, 8), dtype=bool), tcspc_res=5e-11,
-            n_bins=256, params=fitting.merge_params({}))
+            n_bins=256, params=fitting.merge_params({'irf_strategy': 'session'}))
 
 
 def test_geojson_becomes_masks_at_the_stack_resolution():
@@ -170,3 +172,53 @@ def test_geojson_masks_scale_with_binning():
     assert unbinned.shape == (16, 16)
     assert binned.shape == (8, 8)
     assert binned.sum() == pytest.approx(unbinned.sum() / 4, rel=0.35)
+
+
+def test_the_default_irf_is_a_machine_irf():
+    """The user asked for a machine IRF by default rather than a guess."""
+    assert fitting.defaults()['values']['irf_strategy'] == 'machine_irf'
+
+
+def test_irf_strategy_is_offered_as_a_choice():
+    entry = next(e for e in fitting.defaults()['schema']
+                 if e['key'] == 'irf_strategy')
+
+    assert entry['advanced'] is False
+    assert 'machine_irf' in entry['choices']
+    assert 'session' in entry['choices']
+    assert 'gaussian' in entry['choices']
+
+
+def test_min_photons_applies_to_regions_too():
+    entry = next(e for e in fitting.defaults()['schema']
+                 if e['key'] == 'min_photons')
+
+    assert 'roi' in entry['applies_to']
+    assert 'per_pixel' in entry['applies_to']
+    assert fitting.defaults()['values']['min_photons'] == 5
+
+
+def test_dim_pixels_are_excluded_from_a_region_fit():
+    stack, irf = _synthetic_stack(shape=(4, 4))
+    stack = stack.copy()
+    stack[0, 0] = 0
+
+    result = fitting.fit_masked_decay(
+        stack, np.ones((4, 4), dtype=bool), tcspc_res=5e-11, n_bins=256,
+        params=fitting.merge_params({'n_exp': 1, 'min_photons': 5,
+                                     'irf_strategy': 'session'}),
+        irf_prompt=irf)
+
+    assert result['n_pixels'] == 15
+
+
+def test_a_region_of_only_dim_pixels_is_refused():
+    stack, irf = _synthetic_stack(shape=(4, 4))
+    stack = np.zeros_like(stack)
+
+    with pytest.raises(ValueError, match='minimum photon count'):
+        fitting.fit_masked_decay(
+            stack, np.ones((4, 4), dtype=bool), tcspc_res=5e-11, n_bins=256,
+            params=fitting.merge_params({'n_exp': 1, 'min_photons': 5,
+                                         'irf_strategy': 'session'}),
+            irf_prompt=irf)
