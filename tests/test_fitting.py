@@ -5,12 +5,24 @@ from flimkit_qupath_bridge import fitting
 
 
 def _synthetic_stack(tau_ns=2.0, n_bins=256, tcspc_res=5e-11, shape=(8, 8),
-                     photons=200000, background=5.0):
+                     photons=400000, background=2.0, noise=True, seed=0):
+    """A decay built the way the reconvolution model expects: an exponential
+    convolved with the IRF the fit will be given. Building a bare exponential
+    instead makes the model systematically broader than the data, which biases
+    tau low by a few percent and pushes reduced chi-squared into the hundreds."""
+    from flimkit.FLIM.irf_tools import gaussian_irf
     t_ns = np.arange(n_bins) * tcspc_res * 1e9
-    decay = np.exp(-t_ns / tau_ns)
-    decay = decay / decay.sum() * photons + background
-    stack = np.tile(decay, shape + (1,))
-    return np.rint(stack).astype(np.uint32)
+    irf = gaussian_irf(n_bins, 30, 4.0)
+    model = np.real(np.fft.ifft(np.fft.fft(np.exp(-t_ns / tau_ns))
+                                * np.fft.fft(irf)))
+    model = np.clip(model, 0, None)
+    model = model / model.sum() * photons + background
+    per_pixel = np.tile(model, shape + (1,)) / (shape[0] * shape[1])
+    if noise:
+        stack = np.random.default_rng(seed).poisson(per_pixel)
+    else:
+        stack = np.rint(per_pixel)
+    return stack.astype(np.uint32), irf
 
 
 def test_defaults_have_values_and_a_schema():
@@ -48,23 +60,43 @@ def test_merge_params_rejects_a_bad_component_count():
         fitting.merge_params({'n_exp': 9})
 
 
-def test_a_known_single_exponential_is_recovered():
-    stack = _synthetic_stack(tau_ns=2.0)
+@pytest.mark.parametrize('truth', [0.5, 1.0, 2.0, 4.0])
+def test_a_known_single_exponential_is_recovered(truth):
+    stack, irf = _synthetic_stack(tau_ns=truth)
     mask = np.ones(stack.shape[:2], dtype=bool)
 
     result = fitting.fit_masked_decay(
         stack, mask, tcspc_res=5e-11, n_bins=256,
-        params=fitting.merge_params({'n_exp': 1, 'tau_min_ns': 0.2,
-                                     'tau_max_ns': 8.0}))
+        params=fitting.merge_params({'n_exp': 1, 'tau_min_ns': 0.05,
+                                     'tau_max_ns': 10.0}),
+        irf_prompt=irf)
 
-    assert result['taus_ns'][0] == pytest.approx(2.0, rel=0.1)
-    assert result['tau_mean_ns'] == pytest.approx(2.0, rel=0.1)
+    assert result['taus_ns'][0] == pytest.approx(truth, rel=0.02)
+    assert result['tau_mean_ns'] == pytest.approx(truth, rel=0.02)
     assert result['photon_count'] > 0
-    assert result['chi2_r'] > 0
+
+
+@pytest.mark.parametrize('truth', [0.5, 1.0, 2.0, 4.0])
+def test_a_correct_fit_has_reduced_chi_squared_near_one(truth):
+    """The assertion that actually catches a model/data mismatch. A bare
+    exponential fitted with the reconvolution model gives chi2r in the
+    hundreds while still landing within a few percent of the right tau."""
+    stack, irf = _synthetic_stack(tau_ns=truth)
+
+    result = fitting.fit_masked_decay(
+        stack, np.ones(stack.shape[:2], dtype=bool), tcspc_res=5e-11,
+        n_bins=256,
+        params=fitting.merge_params({'n_exp': 1, 'tau_min_ns': 0.05,
+                                     'tau_max_ns': 10.0}),
+        irf_prompt=irf)
+
+    assert 0.5 < result['chi2_r'] < 2.0, (
+        f"reduced chi-squared {result['chi2_r']:.3f} suggests the model and "
+        'the data disagree')
 
 
 def test_mask_selects_only_its_pixels():
-    stack = _synthetic_stack(shape=(4, 4))
+    stack, _ = _synthetic_stack(shape=(4, 4))
     mask = np.zeros((4, 4), dtype=bool)
     mask[0, 0] = True
 
@@ -77,7 +109,7 @@ def test_mask_selects_only_its_pixels():
 
 
 def test_an_empty_mask_is_refused():
-    stack = _synthetic_stack(shape=(4, 4))
+    stack, _ = _synthetic_stack(shape=(4, 4))
 
     with pytest.raises(ValueError, match='no pixels'):
         fitting.fit_masked_decay(
@@ -86,7 +118,7 @@ def test_an_empty_mask_is_refused():
 
 
 def test_mask_shape_must_match_the_stack():
-    stack = _synthetic_stack(shape=(4, 4))
+    stack, _ = _synthetic_stack(shape=(4, 4))
 
     with pytest.raises(ValueError, match='does not match'):
         fitting.fit_masked_decay(
