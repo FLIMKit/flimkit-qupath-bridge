@@ -39,7 +39,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
     private String token = "";
     private boolean manual = false;
 
-    static final String EXTENSION_VERSION = "0.2.0";
+    static final String EXTENSION_VERSION = "0.3.0";
 
     @Override
     public String getName() {
