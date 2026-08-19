@@ -335,6 +335,24 @@ public class BridgeClient {
         return new FetchedImage("maps", file, "");
     }
 
+    public byte[] planeStackTiff(String datasetId, String planes, int x, int y,
+                                 int w, int h, int downsample, int outWidth,
+                                 int outHeight) throws IOException, InterruptedException {
+        String path = "/v1/datasets/" + datasetId + "/planes/stack.tif"
+                + "?planes=" + URLEncoder.encode(planes, StandardCharsets.UTF_8)
+                + "&x=" + x + "&y=" + y + "&w=" + w + "&h=" + h;
+        if (downsample > 1)
+            path += "&downsample=" + downsample;
+        if (outWidth > 0 && outHeight > 0)
+            path += "&ow=" + outWidth + "&oh=" + outHeight;
+        var response = client.send(
+                request(path).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() != 200)
+            throw new IOException("GET plane stack returned " + response.statusCode());
+        return response.body();
+    }
+
     public String planeStats(String datasetId, String body)
             throws IOException, InterruptedException {
         var response = client.send(

@@ -20,11 +20,15 @@ import java.util.List;
 
 public class FlimKitImageServer extends AbstractTileableImageServer {
 
+    private static final org.slf4j.Logger logger =
+            org.slf4j.LoggerFactory.getLogger(FlimKitImageServer.class);
+
     private final URI uri;
     private final String[] args;
     private final BridgeClient client;
     private final String datasetId;
     private final String sourcePath;
+    private final java.util.List<String> planes;
     private final ImageServerMetadata metadata;
 
     FlimKitImageServer(URI uri, Discovery.Details details, String... args) throws IOException,
@@ -39,7 +43,25 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         this.sourcePath = opened.has("path") && !opened.get("path").isJsonNull()
                 ? opened.get("path").getAsString()
                 : path;
+        this.planes = fittedPlanes();
         this.metadata = buildMetadata(opened, path);
+    }
+
+    private java.util.List<String> fittedPlanes() {
+        var found = new java.util.ArrayList<String>();
+        found.add("intensity");
+        try {
+            var listed = JsonParser.parseString(client.planes(datasetId))
+                    .getAsJsonObject().getAsJsonArray("planes");
+            for (var element : listed) {
+                String name = element.getAsJsonObject().get("id").getAsString();
+                if (name.startsWith("tau") && !found.contains(name))
+                    found.add(name);
+            }
+        } catch (Exception e) {
+            logger.debug("No fitted planes to add as channels: {}", e.getMessage());
+        }
+        return java.util.List.copyOf(found);
     }
 
     private static final int TILE = 512;
@@ -68,9 +90,8 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         var builder = new ImageServerMetadata.Builder()
                 .width(width)
                 .height(height)
-                .pixelType(PixelType.UINT16)
-                .channels(List.of(ImageChannel.getInstance(
-                        "Intensity (photons)", ImageChannel.getDefaultChannelColor(0))))
+                .pixelType(planes.size() > 1 ? PixelType.FLOAT32 : PixelType.UINT16)
+                .channels(channelsFor())
                 .rgb(false)
                 .name(Paths.get(path).getFileName().toString())
                 .levelsFromDownsamples(small
@@ -85,15 +106,34 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         return builder.build();
     }
 
+    private List<ImageChannel> channelsFor() {
+        var found = new java.util.ArrayList<ImageChannel>();
+        for (int i = 0; i < planes.size(); i++) {
+            String name = planes.get(i);
+            String label = name.equals("intensity")
+                    ? "Intensity (photons)"
+                    : name + " (ns)";
+            found.add(ImageChannel.getInstance(
+                    label, ImageChannel.getDefaultChannelColor(i)));
+        }
+        return List.copyOf(found);
+    }
+
     @Override
     protected BufferedImage readTile(TileRequest request) throws IOException {
         byte[] tiff;
         try {
-            tiff = client.planeTiff(datasetId, "intensity",
-                    request.getImageX(), request.getImageY(),
-                    request.getImageWidth(), request.getImageHeight(),
-                    (int) Math.round(request.getDownsample()),
-                    request.getTileWidth(), request.getTileHeight());
+            tiff = planes.size() > 1
+                    ? client.planeStackTiff(datasetId, String.join(",", planes),
+                            request.getImageX(), request.getImageY(),
+                            request.getImageWidth(), request.getImageHeight(),
+                            (int) Math.round(request.getDownsample()),
+                            request.getTileWidth(), request.getTileHeight())
+                    : client.planeTiff(datasetId, "intensity",
+                            request.getImageX(), request.getImageY(),
+                            request.getImageWidth(), request.getImageHeight(),
+                            (int) Math.round(request.getDownsample()),
+                            request.getTileWidth(), request.getTileHeight());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException(e);
@@ -102,7 +142,26 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         var imp = opener.openTiff(new ByteArrayInputStream(tiff), "tile");
         if (imp == null)
             throw new IOException("FLIMKit returned a TIFF QuPath could not decode");
-        return imp.getBufferedImage();
+        if (planes.size() == 1)
+            return imp.getBufferedImage();
+        int width = imp.getWidth();
+        int height = imp.getHeight();
+        var stack = imp.getStack();
+        if (stack.getSize() != planes.size())
+            throw new IOException("FLIMKit returned " + stack.getSize()
+                    + " channels, expected " + planes.size());
+        var raster = java.awt.image.WritableRaster.createBandedRaster(
+                java.awt.image.DataBuffer.TYPE_FLOAT, width, height,
+                planes.size(), null);
+        for (int channel = 0; channel < planes.size(); channel++) {
+            var processor = stack.getProcessor(channel + 1).convertToFloat();
+            raster.setSamples(0, 0, width, height, channel,
+                    (float[]) processor.getPixels());
+        }
+        return new BufferedImage(
+                ColorModelFactory.createColorModel(PixelType.FLOAT32,
+                        metadata.getChannels()),
+                raster, false, null);
     }
 
     @Override
