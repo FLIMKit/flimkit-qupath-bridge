@@ -73,7 +73,7 @@ The tiles do not have to sit beside the container. The bridge looks in the direc
 
 When a pipeline job finishes and a QuPath project is open, the maps go into it. The bridge writes a real-unit intensity image beside the run (uint16 when the photon counts fit, float32 otherwise) and points QuPath at that and at the full-range lifetime TIFF, so both carry photons and nanoseconds rather than a display scaling.
 
-`FLIMKIT_BRIDGE_MAX_STACK_BYTES` raises the 2 GiB cap on decoding a stack whole. A 1024 square field at 529 bins needs 2.22 GB, which is over it, so the fit is refused with the binning that would fit. QuPath offers to retry at that binning.
+The cap on decoding a stack whole is a quarter of the machine's memory, with a 2 GiB floor, so a 1024 square field at 529 bins (2.22 GB) goes through on anything with more than 8 GB and an 8 GB laptop behaves as it did. `FLIMKIT_BRIDGE_MAX_STACK_BYTES` overrides it either way. When a stack is still over the cap, QuPath reads the suggested binning out of the refusal and offers to fit again at it.
 
 `pipeline` chooses between `tile_fit`, the default, which fits each tile after a global summed fit and assembles the maps, and `stitch_fit`, which stitches the raw photons into one canvas and fits that. `tile_fit` is the default because `stitch_fit` writes the whole photon cube to disk before it fits anything: a 124 tile mosaic at 512 square is a 5581 square canvas, which is 57 GB at 459 bins. Both run as jobs, so `GET /v1/jobs/{id}` reports progress and `DELETE` cancels. Cancelling stops the run at the next tile, or at the next stage boundary once fitting is done.
 

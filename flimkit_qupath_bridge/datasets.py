@@ -16,7 +16,12 @@ def default_max_stack():
             return max(1, int(override))
         except ValueError:
             pass
-    return DEFAULT_MAX_STACK
+    try:
+        import psutil
+        share = int(psutil.virtual_memory().total * 0.25)
+        return max(DEFAULT_MAX_STACK, share)
+    except Exception:
+        return DEFAULT_MAX_STACK
 
 
 class StackTooLarge(Exception):
@@ -26,7 +31,7 @@ class StackTooLarge(Exception):
             f'decoding this stack needs about {estimated_bytes / 1e9:.2f} GB, '
             f'over the {limit_bytes / 1e9:.2f} GB limit; '
             f'try binning={suggest_binning}, or raise '
-            f'FLIMKIT_BRIDGE_MAX_STACK_BYTES')
+            f'FLIMKIT_BRIDGE_MAX_STACK_BYTES above it')
         self.estimated_bytes = estimated_bytes
         self.limit_bytes = limit_bytes
         self.suggest_binning = suggest_binning

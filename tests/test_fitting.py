@@ -240,4 +240,15 @@ def test_the_stack_limit_is_configurable(monkeypatch):
     assert datasets.default_max_stack() == 9000000000
     assert datasets.DatasetRegistry()._max_stack == 9000000000
     monkeypatch.setenv('FLIMKIT_BRIDGE_MAX_STACK_BYTES', 'not a number')
-    assert datasets.default_max_stack() == datasets.DEFAULT_MAX_STACK
+    assert datasets.default_max_stack() >= datasets.DEFAULT_MAX_STACK
+
+
+def test_the_cap_scales_with_the_machine(monkeypatch):
+    import psutil
+
+    from flimkit_qupath_bridge import datasets
+
+    monkeypatch.delenv('FLIMKIT_BRIDGE_MAX_STACK_BYTES', raising=False)
+    ram = psutil.virtual_memory().total
+    assert datasets.default_max_stack() == max(datasets.DEFAULT_MAX_STACK,
+                                               int(ram * 0.25))
