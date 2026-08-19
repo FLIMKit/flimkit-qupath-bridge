@@ -268,6 +268,8 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
         )
     edges = np.linspace(0, height, bands + 1).astype(int)
     collected = []
+    where = 'the GPU' if params.get('use_gpu', True) else 'the CPU'
+    print(f'  Per-pixel fit over {height} rows in {bands} bands on {where}...')
     for index in range(bands):
         if cancel is not None and cancel.is_set():
             return None
@@ -286,6 +288,7 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             fit_model=fit_model,
         )
         collected.append(maps)
+        print(f'    band {index + 1} of {bands}')
         if progress is not None:
             progress(index + 1, bands, f'band {index + 1} of {bands}')
     if not collected:
