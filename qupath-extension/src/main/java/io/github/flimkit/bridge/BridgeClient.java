@@ -305,5 +305,34 @@ public class BridgeClient {
         return Integer.parseInt(digits.toString());
     }
 
+    public FetchedImage fetchPlane(String datasetId, String plane)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/planes/" + plane + ".tif")
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() != 200)
+            throw new IOException("GET plane " + plane + " returned "
+                    + response.statusCode());
+        String unit = response.headers().firstValue("X-FLIMKit-Value-Unit").orElse("");
+        Path file = Files.createTempFile("flimkit-" + plane + "-", ".tif");
+        Files.write(file, response.body());
+        return new FetchedImage(plane, file, unit);
+    }
+
+    public String fitPixels(String datasetId, String body)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/fit/pixels")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("POST fit/pixels returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
     public record FetchedImage(String imageId, Path file, String valueUnit) {}
 }

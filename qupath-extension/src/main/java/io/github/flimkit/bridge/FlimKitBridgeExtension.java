@@ -67,6 +67,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                 null,
                 menuItem("Stitch and fit a mosaic...", () -> stitchAndFit(qupath)),
                 menuItem("Fit ROI decays...", () -> fitRois(qupath)),
+                menuItem("Fit per-pixel lifetimes...", () -> fitPixels(qupath)),
                 menuItem("Phasor plot...", () -> openPhasor(qupath)),
                 null,
                 menuItem("Send annotations to FLIMKit", () -> sendAnnotations(qupath)),
@@ -500,12 +501,126 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         }
     }
 
+    private void fitPixels(QuPathGUI qupath) {
+        var imageData = qupath.getImageData();
+        if (imageData == null) {
+            Dialogs.showErrorMessage(getName(), "No image is open.");
+            return;
+        }
+        if (!(imageData.getServer() instanceof FlimKitImageServer bridged)) {
+            Dialogs.showErrorMessage(getName(),
+                    "This image was not opened through the FLIMKit bridge, so "
+                            + "FLIMKit has no decay data for it.\n\n"
+                            + "Open the FLIM file itself with File > Open.");
+            return;
+        }
+        if (qupath.getProject() == null) {
+            Dialogs.showErrorMessage(getName(),
+                    "No project is open. Create or open a project first, so the "
+                            + "lifetime maps have somewhere to go.");
+            return;
+        }
+        try {
+            var client = client();
+            var defaults = JsonParser.parseString(client.fitDefaults()).getAsJsonObject();
+            var chosen = new FitDialog(defaults).prompt("Fit per-pixel lifetimes",
+                    "per_pixel");
+            if (chosen == null)
+                return;
+            var body = new JsonObject();
+            body.add("params", chosen);
+            var started = JsonParser.parseString(
+                    client.fitPixels(bridged.getDatasetId(), body.toString()))
+                    .getAsJsonObject();
+            String jobId = started.get("job").getAsString();
+            new BridgeJob(client, jobId, "FLIMKit: per-pixel fit").watch(
+                    status -> importPlanes(qupath, client, bridged.getDatasetId(), jobId),
+                    problem -> {
+                        if (problem == null)
+                            Dialogs.showInfoNotification(getName(), "Cancelled");
+                        else
+                            Dialogs.showErrorMessage(getName(),
+                                    "Per-pixel fit failed\n\n" + problem);
+                    });
+        } catch (Exception e) {
+            logger.error("Could not start the per-pixel fit", e);
+            Dialogs.showErrorMessage(getName(),
+                    "Could not start the per-pixel fit\n\n" + e.getMessage());
+        }
+    }
+
+    private void importPlanes(QuPathGUI qupath, BridgeClient client,
+                              String datasetId, String jobId) {
+        var project = qupath.getProject();
+        if (project == null)
+            return;
+        var wanted = new ArrayList<String>();
+        try {
+            var result = resultOf(client.jobResult(jobId));
+            if (result != null && result.has("planes")) {
+                for (var element : result.getAsJsonArray("planes")) {
+                    String name = element.getAsString();
+                    if (name.equals("intensity") || name.startsWith("tau"))
+                        wanted.add(name);
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Could not read the per-pixel result", e);
+        }
+        if (wanted.isEmpty()) {
+            Dialogs.showInfoNotification(getName(),
+                    "Fitted, but no lifetime map came back to add.");
+            return;
+        }
+        var manifest = ProjectManifest.open(project);
+        var added = new ArrayList<String>();
+        var skipped = new ArrayList<String>();
+        for (String plane : wanted) {
+            try {
+                var fetched = client.fetchPlane(datasetId, plane);
+                Path stored = ProjectImporter.storeBesideProject(
+                        project, datasetId + "_" + plane, fetched.file());
+                var entry = ProjectImporter.addToProject(
+                        project, stored, datasetId + "_" + plane, fetched.valueUnit());
+                added.add(entry.getImageName());
+                if (manifest != null)
+                    manifest.recordImage(datasetId + "_" + plane,
+                            stored.getFileName().toString(), fetched.valueUnit(),
+                            datasetId);
+            } catch (Exception e) {
+                logger.warn("Could not add plane {}", plane, e);
+                skipped.add(plane);
+            }
+        }
+        try {
+            project.syncChanges();
+        } catch (IOException e) {
+            logger.error("Could not save the project", e);
+        }
+        saveManifest(manifest);
+        qupath.refreshProject();
+        String message = added.isEmpty()
+                ? "Fitted, but none of the maps could be added"
+                : "Added " + String.join(", ", added);
+        if (!skipped.isEmpty())
+            message += "\nNot added: " + String.join(", ", skipped);
+        Dialogs.showInfoNotification(getName(), message);
+    }
+
+    static JsonObject resultOf(String reply) {
+        var payload = JsonParser.parseString(reply).getAsJsonObject();
+        if (payload.has("result") && payload.get("result").isJsonObject())
+            return payload.getAsJsonObject("result");
+        return payload.has("result") ? null : payload;
+    }
+
     private void importProducts(QuPathGUI qupath, BridgeClient client,
                                 String jobId, String outputDir) {
         JsonArray products = new JsonArray();
         try {
-            var result = JsonParser.parseString(client.jobResult(jobId)).getAsJsonObject();
-            if (result.has("products") && result.get("products").isJsonArray())
+            var result = resultOf(client.jobResult(jobId));
+            if (result != null && result.has("products")
+                    && result.get("products").isJsonArray())
                 products = result.getAsJsonArray("products");
         } catch (Exception e) {
             logger.warn("Could not read the pipeline result", e);
