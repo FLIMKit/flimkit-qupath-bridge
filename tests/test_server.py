@@ -61,7 +61,10 @@ def test_status_needs_no_token(running_server):
     base_url, _ = running_server
     with urlopen(f'{base_url}/v1/status') as response:
         payload = json.load(response)
-    assert payload == {'protocol': 'flimkit-qupath', 'protocol_version': 1}
+    assert payload['protocol'] == 'flimkit-qupath'
+    assert payload['protocol_version'] == 1
+    assert payload['bridge_version']
+    assert payload['flimkit_version']
 
 
 def test_image_requires_token(running_server):

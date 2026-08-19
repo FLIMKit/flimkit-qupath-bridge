@@ -111,3 +111,13 @@ def test_port_fallback_when_busy():
             create_server('127.0.0.1', busy_port, 'tok', second_state)
     finally:
         first.server_close()
+
+
+def test_status_reports_both_versions():
+    from flimkit_qupath_bridge.version import report
+
+    found = report()
+    assert found['protocol'] == 'flimkit-qupath'
+    assert found['protocol_version'] == 1
+    assert found['bridge_version'] not in (None, '')
+    assert found['flimkit_version'] not in (None, '')

@@ -37,6 +37,9 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
 
     private String baseUrl = "http://127.0.0.1:8765";
     private String token = "";
+    private boolean manual = false;
+
+    static final String EXTENSION_VERSION = "0.2.0";
 
     @Override
     public String getName() {
@@ -89,8 +92,10 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             }
             baseUrl = details.url();
             token = details.token();
-            new BridgeClient(baseUrl, token).status();
+            manual = false;
+            String reported = new BridgeClient(baseUrl, token).status();
             Dialogs.showInfoNotification(getName(), "Connected to " + baseUrl);
+            warnOnVersionMismatch(reported);
             return;
         } catch (Exception e) {
             logger.info("No usable discovery file, asking instead: {}", e.getMessage());
@@ -109,14 +114,54 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             return;
         baseUrl = url.trim();
         token = pairing.trim();
+        manual = true;
         try {
-            new BridgeClient(baseUrl, token).status();
+            String reported = client().status();
             Dialogs.showInfoNotification(getName(), "Connected to " + baseUrl);
+            warnOnVersionMismatch(reported);
         } catch (Exception e) {
             logger.error("Could not reach the FLIMKit bridge", e);
             Dialogs.showErrorMessage(getName(), "Could not reach " + baseUrl
                     + "\n\n" + e.getMessage());
         }
+    }
+
+    private BridgeClient client() {
+        if (!manual) {
+            try {
+                var details = Discovery.read();
+                if (!details.stale()) {
+                    baseUrl = details.url();
+                    token = details.token();
+                }
+            } catch (Exception e) {
+                logger.debug("No discovery file to refresh from: {}", e.getMessage());
+            }
+        }
+        return new BridgeClient(baseUrl, token);
+    }
+
+    void warnOnVersionMismatch(String reported) {
+        String theirs = versionIn(reported);
+        if (theirs == null || theirs.equals(EXTENSION_VERSION))
+            return;
+        Dialogs.showWarningNotification(getName(),
+                "This extension is " + EXTENSION_VERSION + " and the bridge it "
+                        + "connected to is " + theirs + ".\n\nUpdate whichever is "
+                        + "older, or settings the other side does not know about "
+                        + "will be missing.");
+    }
+
+    static String versionIn(String reported) {
+        if (reported == null)
+            return null;
+        try {
+            var payload = JsonParser.parseString(reported).getAsJsonObject();
+            if (payload.has("bridge_version") && !payload.get("bridge_version").isJsonNull())
+                return payload.get("bridge_version").getAsString();
+        } catch (RuntimeException ignored) {
+        }
+        return null;
     }
 
     private void addImages(QuPathGUI qupath) {
@@ -127,7 +172,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                             + "FLIMKit images can sit beside your brightfield image.");
             return;
         }
-        var client = new BridgeClient(baseUrl, token);
+        var client = client();
         var manifest = ProjectManifest.open(project);
         var added = new ArrayList<String>();
         var skipped = new ArrayList<String>();
@@ -179,7 +224,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             return;
         }
         try {
-            new PhasorWindow(qupath, new BridgeClient(baseUrl, token),
+            new PhasorWindow(qupath, client(),
                     bridged.getDatasetId(), imageData).show();
         } catch (Exception e) {
             logger.error("Could not open the phasor window", e);
@@ -220,7 +265,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             selected.add(annotation);
         }
         try {
-            var client = new BridgeClient(baseUrl, token);
+            var client = client();
             var defaults = JsonParser.parseString(client.fitDefaults()).getAsJsonObject();
             var chosen = new FitDialog(defaults).prompt("Fit ROI decays", "roi");
             if (chosen == null)
@@ -372,7 +417,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                     "Nothing recorded yet in " + manifest.path().getFileName());
             return;
         }
-        var client = new BridgeClient(baseUrl, token);
+        var client = client();
         var opened = new ArrayList<String>();
         var missing = new ArrayList<String>();
         for (String source : sources) {
@@ -415,7 +460,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         if (container == null)
             return;
         try {
-            var client = new BridgeClient(baseUrl, token);
+            var client = client();
             var defaults = JsonParser.parseString(client.pipelineDefaults()).getAsJsonObject();
             var chosen = new FitDialog(defaults).prompt("Stitch and fit", "pipeline");
             if (chosen == null)
@@ -519,7 +564,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             return;
         }
         try {
-            int received = new BridgeClient(baseUrl, token)
+            int received = client()
                     .postRois(toFeatureCollection(annotations));
             Dialogs.showInfoNotification(getName(),
                     "FLIMKit accepted " + received + " ROI(s)");
@@ -536,7 +581,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             return;
         }
         try {
-            String geojson = new BridgeClient(baseUrl, token).fetchRois();
+            String geojson = client().fetchRois();
             List<PathObject> objects = GsonTools.parseObjectsFromGeoJSON(geojson);
             if (objects.isEmpty()) {
                 Dialogs.showInfoNotification(getName(), "FLIMKit returned no ROIs");

@@ -97,10 +97,8 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
             if not self._local_only():
                 return
             if self.path == '/v1/status':
-                self._send_json(200, {
-                    'protocol': 'flimkit-qupath',
-                    'protocol_version': 1,
-                })
+                from flimkit_qupath_bridge.version import report
+                self._send_json(200, report())
                 return
             if self._dataset_get():
                 return

@@ -71,6 +71,8 @@ GET  /v1/pipeline/defaults
 
 The tiles do not have to sit beside the container. The bridge looks in the directory you name, then beside the container, then in the directories next to it, which is where Leica puts them.
 
+`GET /v1/status` reports `bridge_version` and `flimkit_version` alongside the protocol version, and QuPath warns when the extension and the bridge are not the same version. It also re-reads the discovery file before every call, because each bridge start mints a new token, so a restarted bridge used to turn every request into a bare 401 until you hit Connect again. A manually entered address is left alone.
+
 Summed fits run with `workers=1`. `fit_summed` defaults to `workers=-1`, which starts a process pool inside the server for every fit, and on a spawn platform each worker re-imports FLIMKit. It measured slower than a single worker even on a 10 core machine, 1.74s against 1.15s.
 
 Per-pixel fits use the GPU. They were pinned to the CPU so the row banding could report progress, which cost the 4x the GPU gives on a full field. Each band goes to the GPU now, and `use_gpu` turns that off.
