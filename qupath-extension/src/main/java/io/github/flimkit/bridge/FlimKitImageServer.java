@@ -24,6 +24,7 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
     private final String[] args;
     private final BridgeClient client;
     private final String datasetId;
+    private final String sourcePath;
     private final ImageServerMetadata metadata;
 
     FlimKitImageServer(URI uri, Discovery.Details details, String... args) throws IOException,
@@ -35,12 +36,35 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         String path = Paths.get(uri).toAbsolutePath().toString();
         JsonObject opened = JsonParser.parseString(client.openDataset(path)).getAsJsonObject();
         this.datasetId = opened.get("id").getAsString();
+        this.sourcePath = opened.has("path") && !opened.get("path").isJsonNull()
+                ? opened.get("path").getAsString()
+                : path;
         this.metadata = buildMetadata(opened, path);
+    }
+
+    private static final int TILE = 512;
+
+    static double[] downsamplesFor(int width, int height) {
+        var levels = new java.util.ArrayList<Double>();
+        double level = 1.0;
+        while (true) {
+            levels.add(level);
+            if (width / level <= TILE * 2 && height / level <= TILE * 2)
+                break;
+            if (levels.size() >= 8)
+                break;
+            level *= 2;
+        }
+        double[] found = new double[levels.size()];
+        for (int i = 0; i < levels.size(); i++)
+            found[i] = levels.get(i);
+        return found;
     }
 
     private ImageServerMetadata buildMetadata(JsonObject opened, String path) {
         int width = opened.get("width").getAsInt();
         int height = opened.get("height").getAsInt();
+        boolean small = width <= TILE && height <= TILE;
         var builder = new ImageServerMetadata.Builder()
                 .width(width)
                 .height(height)
@@ -49,8 +73,10 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
                         "Intensity (photons)", ImageChannel.getDefaultChannelColor(0))))
                 .rgb(false)
                 .name(Paths.get(path).getFileName().toString())
-                .levelsFromDownsamples(1.0)
-                .preferredTileSize(width, height);
+                .levelsFromDownsamples(small
+                        ? new double[] {1.0}
+                        : downsamplesFor(width, height))
+                .preferredTileSize(small ? width : TILE, small ? height : TILE);
         if (!opened.get("pixel_size_um").isJsonNull()) {
             double size = opened.get("pixel_size_um").getAsDouble();
             if (size > 0)
@@ -65,7 +91,9 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         try {
             tiff = client.planeTiff(datasetId, "intensity",
                     request.getImageX(), request.getImageY(),
-                    request.getImageWidth(), request.getImageHeight());
+                    request.getImageWidth(), request.getImageHeight(),
+                    (int) Math.round(request.getDownsample()),
+                    request.getTileWidth(), request.getTileHeight());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException(e);
@@ -105,6 +133,10 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
 
     String getDatasetId() {
         return datasetId;
+    }
+
+    String getSourcePath() {
+        return sourcePath;
     }
 
     @Override

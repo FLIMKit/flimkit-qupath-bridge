@@ -106,7 +106,7 @@ def plane_tiff(state, ident, name, query):
             raise RouteError(404, f'no such plane: {name}')
     array = np.asarray(array)
     unit = UNITS.get(name) or registry.plane_unit(ident, name)
-    array = _crop(array, options)
+    array = _shrink(_crop(array, options), options)
     buffer = BytesIO()
     tifffile.imwrite(buffer, encode_image(name, array))
     return buffer.getvalue(), unit, binning, array.shape
@@ -130,6 +130,42 @@ def _crop(array, options):
             400,
             f'requested region {w}x{h} at ({x},{y}) falls outside {width}x{height}')
     return array[y:y + h, x:x + w]
+
+
+def _shrink(array, options):
+    try:
+        step = int(round(float(options.get('downsample', ['1'])[0])))
+    except ValueError:
+        raise RouteError(400, 'downsample must be a number')
+    if step < 1:
+        raise RouteError(400, 'downsample must be 1 or more')
+    if step > 1:
+        array = array[::step, ::step]
+    wanted = [k for k in ('ow', 'oh') if k in options]
+    if not wanted:
+        return array
+    if len(wanted) != 2:
+        raise RouteError(400, 'ow and oh must both be given together')
+    try:
+        out_w = int(options['ow'][0])
+        out_h = int(options['oh'][0])
+    except ValueError:
+        raise RouteError(400, 'ow and oh must be whole numbers')
+    if out_w <= 0 or out_h <= 0:
+        raise RouteError(400, 'ow and oh must be non-zero')
+    return _fit_exactly(array, out_h, out_w)
+
+
+def _fit_exactly(array, out_h, out_w):
+    height, width = array.shape[:2]
+    if (height, width) == (out_h, out_w):
+        return array
+    trimmed = array[:min(height, out_h), :min(width, out_w)]
+    if trimmed.shape[:2] == (out_h, out_w):
+        return trimmed
+    padded = np.zeros((out_h, out_w) + array.shape[2:], dtype=array.dtype)
+    padded[:trimmed.shape[0], :trimmed.shape[1]] = trimmed
+    return padded
 
 
 FIT_ROI_RE = re.compile(r'^/v1/datasets/([^/]+)/fit/roi$')
@@ -160,6 +196,8 @@ def fit_rois(state, ident, payload):
         stack = registry.stack(ident, binning=binning)
     except StackTooLarge as exc:
         raise RouteError(413, str(exc))
+    except ValueError as exc:
+        raise RouteError(400, str(exc))
     try:
         masks = fitting.masks_from_geojson(
             collection, (meta['height'], meta['width']), binning=binning)
@@ -317,6 +355,46 @@ def _jobs(state):
     if registry is None:
         raise RouteError(503, 'this FLIMKit has no job registry')
     return registry
+
+
+def pipeline_defaults(state):
+    from flimkit_qupath_bridge import pipeline
+    return pipeline.defaults()
+
+
+def run_pipeline(state, payload):
+    from flimkit_qupath_bridge import pipeline
+    jobs = _jobs(state)
+    payload = payload or {}
+    container = payload.get('container') or payload.get('path')
+    if not container:
+        raise RouteError(400, 'a container is required, a .lif or .xlif')
+    try:
+        params = pipeline.merge_params(payload.get('params'))
+    except ValueError as exc:
+        raise RouteError(400, str(exc))
+    try:
+        container, tile_dir, output_dir, basename, n_tiles = pipeline.resolve(
+            container, payload.get('tile_dir'), payload.get('output_dir'),
+            payload.get('basename'))
+    except ValueError as exc:
+        raise RouteError(400, str(exc))
+    except FileNotFoundError as exc:
+        raise RouteError(404, str(exc))
+    args = pipeline.build_args(container, tile_dir, output_dir, basename, params)
+    chosen = params['pipeline']
+
+    def work(progress, cancel):
+        progress(0, n_tiles, f'{chosen} over {n_tiles} tiles')
+        result = pipeline.run(args, chosen, progress, cancel)
+        if cancel.is_set():
+            return None
+        return pipeline.summarise(result, output_dir)
+
+    job_id = jobs.submit(chosen, work)
+    return {'job': job_id, 'container': str(container),
+            'tile_dir': str(tile_dir), 'output_dir': str(output_dir),
+            'basename': basename, 'n_tiles': n_tiles, 'params_used': params}
 
 
 def fit_pixels(state, ident, payload):

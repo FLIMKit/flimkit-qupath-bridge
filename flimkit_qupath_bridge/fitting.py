@@ -57,6 +57,15 @@ def defaults():
     return {'values': values, 'schema': schema}
 
 
+def _match_choice(key, value, choices):
+    if value in choices:
+        return value
+    for choice in choices:
+        if str(choice) == str(value):
+            return choice
+    raise ValueError(f'{key} must be one of {list(choices)}, got {value!r}')
+
+
 def merge_params(supplied):
     known = {entry['key']: entry for entry in SCHEMA}
     merged = defaults()['values']
@@ -79,9 +88,8 @@ def _validate(merged, known):
             value = bool(value)
         elif entry['type'] == 'path':
             value = str(value or '')
-        elif entry['type'] == 'choice' and value not in entry['choices']:
-            raise ValueError(
-                f'{key} must be one of {list(entry["choices"])}, got {value!r}')
+        elif entry['type'] == 'choice':
+            value = _match_choice(key, value, entry['choices'])
         if 'min' in entry and value < entry['min']:
             raise ValueError(f'{key} must be at least {entry["min"]}, got {value}')
         if 'max' in entry and value > entry['max']:
@@ -92,7 +100,10 @@ def _validate(merged, known):
 
 
 def masks_from_geojson(collection, image_shape, binning=1):
-    from flimkit.UI.roi_tools import RoiManager
+    try:
+        from flimkit.utils.roi import RoiManager
+    except ImportError:
+        from flimkit.UI.roi_tools import RoiManager
     manager = RoiManager()
     scaled = _scale_collection(collection, binning)
     ids = manager.add_geojson(scaled, mode='replace')
@@ -136,7 +147,6 @@ def build_irf(n_bins, tcspc_res, decay, cached=None, params=None):
 
 
 def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
-    from flimkit.FLIM.fitters import fit_summed
     stack = np.asarray(stack)
     mask = np.asarray(mask, dtype=bool)
     if mask.shape != stack.shape[:2]:
@@ -144,13 +154,21 @@ def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
             f'mask shape {mask.shape} does not match stack shape {stack.shape[:2]}')
     if not mask.any():
         raise ValueError('the region selects no pixels')
+    values = np.asarray(stack[mask], dtype=np.float64)
     if int(params.get('min_photons', 0)):
-        bright = stack.sum(axis=2) >= int(params['min_photons'])
-        mask = mask & bright
-        if not mask.any():
+        bright = values.sum(axis=1) >= int(params['min_photons'])
+        if not bright.any():
             raise ValueError(
                 'no pixels in the region reach the minimum photon count')
-    decay = stack[mask].sum(axis=0).astype(float)
+        values = values[bright]
+    decay = values.sum(axis=0)
+    return fit_decay(decay, int(values.shape[0]), tcspc_res, n_bins, params,
+                     irf_prompt=irf_prompt)
+
+
+def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
+    from flimkit.FLIM.fitters import fit_summed
+    decay = np.asarray(decay, dtype=float)
     irf, irf_source = build_irf(n_bins, tcspc_res, decay, cached=irf_prompt,
                                 params=params)
     popt, summary = fit_summed(
@@ -175,7 +193,7 @@ def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
         'chi2_r': float(summary['reduced_chi2']),
         'chi2_r_tail': float(summary['reduced_chi2_tail']),
         'photon_count': int(decay.sum()),
-        'n_pixels': int(mask.sum()),
+        'n_pixels': int(n_pixels),
         'irf_source': irf_source,
         'n_exp': int(params['n_exp']),
     }

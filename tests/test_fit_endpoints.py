@@ -83,15 +83,23 @@ def test_fitting_a_real_roi_returns_measurements(served):
 
 def test_two_rois_give_two_results(served):
     opened = _call(served, '/v1/datasets', 'POST', {'path': PTU_PATH})
-    quarter = opened['width'] // 4
+    binning = 1
+    while binning < 8 and min(opened['width'], opened['height']) // (binning * 2) >= 32:
+        binning *= 2
+    quarter = opened['width'] // (4 * binning)
+    assert quarter >= 2, (
+        f"{opened['width']}x{opened['height']} is too small to hold two nested "
+        'regions at any binning')
 
     payload = _call(
         served, f"/v1/datasets/{opened['id']}/fit/roi", 'POST',
         {'rois': {'type': 'FeatureCollection',
                   'features': [_square('A', quarter), _square('B', quarter * 2)]},
-         'params': {'n_exp': 1, 'binning': 8}})
+         'params': {'n_exp': 1, 'binning': binning}})
 
     assert [r['name'] for r in payload['results']] == ['A', 'B']
+    for result in payload['results']:
+        assert 'error' not in result, result['error']
     assert payload['results'][1]['n_pixels'] > payload['results'][0]['n_pixels']
 
 

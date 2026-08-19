@@ -28,6 +28,9 @@ dependencies = [
 [project.optional-dependencies]
 test = ['pytest']
 
+[project.scripts]
+flimkit-bridge = 'flimkit_qupath_bridge.headless:main'
+
 [project.urls]
 Homepage = 'https://github.com/FLIMKit/flimkit-qupath-bridge'
 Issues = 'https://github.com/FLIMKit/flimkit-qupath-bridge/issues'

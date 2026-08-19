@@ -147,6 +147,55 @@ def test_plane_sub_rectangle(served):
     assert array.shape == (2, 4)
 
 
+def test_plane_downsample_halves_the_tile(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    array, _ = _plane(url, opened['id'], 'intensity', '?x=0&y=0&w=8&h=8&downsample=2')
+
+    assert array.shape == (4, 4)
+
+
+def test_plane_returns_exactly_the_tile_size_asked_for(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    array, _ = _plane(url, opened['id'], 'intensity',
+                      '?x=0&y=0&w=8&h=8&downsample=2&ow=4&oh=4')
+
+    assert array.shape == (4, 4)
+
+
+def test_a_ragged_edge_tile_is_padded_to_the_tile_size(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    array, _ = _plane(url, opened['id'], 'intensity',
+                      '?x=0&y=0&w=7&h=7&downsample=2&ow=4&oh=4')
+
+    assert array.shape == (4, 4), 'QuPath needs every tile at the size it asked for'
+
+
+def test_a_downsampled_tile_samples_the_full_resolution_one(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    full, _ = _plane(url, opened['id'], 'intensity', '?x=0&y=0&w=8&h=8')
+    half, _ = _plane(url, opened['id'], 'intensity', '?x=0&y=0&w=8&h=8&downsample=2')
+
+    assert (half == full[::2, ::2]).all()
+
+
+def test_a_bad_downsample_is_refused(served):
+    url, _, path = served
+    _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})
+
+    for query in ('?x=0&y=0&w=8&h=8&downsample=0', '?x=0&y=0&w=8&h=8&downsample=wide'):
+        with pytest.raises(HTTPError) as caught:
+            _plane(url, opened['id'], 'intensity', query)
+        assert caught.value.code == 400
+
+
 def test_plane_sub_rectangle_out_of_bounds_is_400(served):
     url, _, path = served
     _, opened, _ = _call(url, '/v1/datasets', 'POST', {'path': path})

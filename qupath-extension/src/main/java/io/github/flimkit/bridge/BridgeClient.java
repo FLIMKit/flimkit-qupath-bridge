@@ -37,6 +37,53 @@ public class BridgeClient {
                 .timeout(Duration.ofMinutes(2));
     }
 
+    public String pipelineDefaults() throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/pipeline/defaults").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET pipeline defaults returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
+    public String runPipeline(String body) throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/pipeline")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("POST pipeline returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
+    public String jobStatus(String jobId) throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/jobs/" + jobId).GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET job " + jobId + " returned " + response.statusCode());
+        return response.body();
+    }
+
+    public String jobResult(String jobId) throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/jobs/" + jobId + "?result").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET job result " + jobId + " returned "
+                    + response.statusCode());
+        return response.body();
+    }
+
+    public void cancelJob(String jobId) throws IOException, InterruptedException {
+        client.send(request("/v1/jobs/" + jobId).DELETE().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
     public String status() throws IOException, InterruptedException {
         var response = client.send(
                 HttpRequest.newBuilder().uri(URI.create(baseUrl + "/v1/status")).GET().build(),
@@ -96,6 +143,15 @@ public class BridgeClient {
         return out.append('"').toString();
     }
 
+    public String datasets() throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET datasets returned " + response.statusCode());
+        return response.body();
+    }
+
     public String openDataset(String path) throws IOException, InterruptedException {
         String body = "{\"path\":" + quote(path) + "}";
         var response = client.send(
@@ -127,8 +183,18 @@ public class BridgeClient {
 
     public byte[] planeTiff(String datasetId, String plane, int x, int y, int w, int h)
             throws IOException, InterruptedException {
+        return planeTiff(datasetId, plane, x, y, w, h, 1, 0, 0);
+    }
+
+    public byte[] planeTiff(String datasetId, String plane, int x, int y, int w, int h,
+                            int downsample, int outWidth, int outHeight)
+            throws IOException, InterruptedException {
         String path = "/v1/datasets/" + datasetId + "/planes/" + plane + ".tif"
                 + "?x=" + x + "&y=" + y + "&w=" + w + "&h=" + h;
+        if (downsample > 1)
+            path += "&downsample=" + downsample;
+        if (outWidth > 0 && outHeight > 0)
+            path += "&ow=" + outWidth + "&oh=" + outHeight;
         var response = client.send(
                 request(path).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
