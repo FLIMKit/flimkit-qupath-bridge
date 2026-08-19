@@ -11,11 +11,15 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
+import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.Node;
 
 import javafx.stage.FileChooser;
@@ -42,11 +46,13 @@ public class FitDialog {
         var grid = new GridPane();
         grid.setHgap(8);
         grid.setVgap(6);
+        var advancedGrid = new GridPane();
+        advancedGrid.setHgap(8);
+        advancedGrid.setVgap(6);
         int row = 0;
+        int advancedRow = 0;
         for (var element : schema) {
             JsonObject entry = element.getAsJsonObject();
-            if (entry.get("advanced").getAsBoolean())
-                continue;
             if (!appliesTo(entry, mode))
                 continue;
             String key = entry.get("key").getAsString();
@@ -54,11 +60,31 @@ public class FitDialog {
             if (control == null)
                 continue;
             controls.put(key, control);
-            grid.add(new Label(entry.get("label").getAsString()), 0, row);
-            grid.add(control, 1, row);
-            row++;
+            var label = new Label(entry.get("label").getAsString());
+            if (entry.get("advanced").getAsBoolean()) {
+                advancedGrid.add(label, 0, advancedRow);
+                advancedGrid.add(control, 1, advancedRow);
+                advancedRow++;
+            }
+            else {
+                grid.add(label, 0, row);
+                grid.add(control, 1, row);
+                row++;
+            }
         }
-        dialog.getDialogPane().setContent(grid);
+        var content = new VBox(8, grid);
+        if (advancedRow > 0) {
+            var toggle = new CheckBox("Show advanced settings");
+            advancedGrid.setVisible(false);
+            advancedGrid.setManaged(false);
+            toggle.selectedProperty().addListener((observed, was, now) -> {
+                advancedGrid.setVisible(now);
+                advancedGrid.setManaged(now);
+                dialog.getDialogPane().getScene().getWindow().sizeToScene();
+            });
+            content.getChildren().addAll(new Separator(), toggle, advancedGrid);
+        }
+        dialog.getDialogPane().setContent(content);
         dialog.getDialogPane().getButtonTypes().addAll(
                 new ButtonType("Fit", ButtonBar.ButtonData.OK_DONE),
                 ButtonType.CANCEL);
@@ -85,12 +111,12 @@ public class FitDialog {
             case "int" -> {
                 int min = entry.has("min") ? entry.get("min").getAsInt() : 0;
                 int max = entry.has("max") ? entry.get("max").getAsInt() : 1000;
-                return new Spinner<Integer>(min, max, values.get(key).getAsInt());
+                return typable(new Spinner<Integer>(min, max, values.get(key).getAsInt()));
             }
             case "float" -> {
                 double min = entry.has("min") ? entry.get("min").getAsDouble() : 0;
                 double max = entry.has("max") ? entry.get("max").getAsDouble() : 1000;
-                return new Spinner<Double>(min, max, values.get(key).getAsDouble(), 0.1);
+                return typable(new Spinner<Double>(min, max, values.get(key).getAsDouble(), 0.1));
             }
             case "bool" -> {
                 var box = new CheckBox();
@@ -128,6 +154,50 @@ public class FitDialog {
         }
     }
 
+    private static <T> Spinner<T> typable(Spinner<T> spinner) {
+        spinner.setEditable(true);
+        spinner.setFocusTraversable(true);
+        spinner.getEditor().setFocusTraversable(true);
+        spinner.focusedProperty().addListener((observed, had, has) -> {
+            if (!has)
+                commit(spinner);
+        });
+        spinner.getEditor().focusedProperty().addListener((observed, had, has) -> {
+            if (!has)
+                commit(spinner);
+        });
+        spinner.getEditor().addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                commit(spinner);
+                return;
+            }
+            if (event.getCode() == KeyCode.UP) {
+                commit(spinner);
+                spinner.increment();
+                event.consume();
+            }
+            else if (event.getCode() == KeyCode.DOWN) {
+                commit(spinner);
+                spinner.decrement();
+                event.consume();
+            }
+        });
+        return spinner;
+    }
+
+    private static <T> void commit(Spinner<T> spinner) {
+        var factory = spinner.getValueFactory();
+        if (factory == null || factory.getConverter() == null)
+            return;
+        var converter = factory.getConverter();
+        String typed = spinner.getEditor().getText();
+        try {
+            factory.setValue(converter.fromString(typed));
+        } catch (RuntimeException ignored) {
+            spinner.getEditor().setText(converter.toString(factory.getValue()));
+        }
+    }
+
     JsonObject collect() {
         var chosen = new JsonObject();
         for (var pair : controls.entrySet()) {
@@ -137,8 +207,10 @@ public class FitDialog {
                 if (!typed.isBlank())
                     chosen.addProperty(pair.getKey(), typed);
             }
-            else if (control instanceof Spinner<?> spinner)
+            else if (control instanceof Spinner<?> spinner) {
+                commit(spinner);
                 chosen.addProperty(pair.getKey(), (Number) spinner.getValue());
+            }
             else if (control instanceof CheckBox box)
                 chosen.addProperty(pair.getKey(), box.isSelected());
             else if (control instanceof ChoiceBox<?> box)

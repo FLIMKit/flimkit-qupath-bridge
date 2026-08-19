@@ -1,6 +1,7 @@
 import argparse
 import os
 import secrets
+import sys
 
 from flimkit_qupath_bridge import discovery
 from flimkit_qupath_bridge.server import bind
@@ -45,6 +46,11 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except Exception:
+            pass
     args = parse_args(argv)
     announce = not args.no_announce
     if announce and not args.force:

@@ -95,6 +95,8 @@ def plane_tiff(state, ident, name, query):
     binning = int(options.get('binning', ['1'])[0])
     if binning < 1:
         raise RouteError(400, 'binning must be 1 or more')
+    if name == 'stack':
+        return _plane_stack(registry, ident, options, binning)
     if name == 'intensity':
         try:
             array = registry.intensity(ident, binning=binning)
@@ -110,6 +112,92 @@ def plane_tiff(state, ident, name, query):
     buffer = BytesIO()
     tifffile.imwrite(buffer, encode_image(name, array))
     return buffer.getvalue(), unit, binning, array.shape
+
+
+PLANE_STATS_RE = re.compile(r'^/v1/datasets/([^/]+)/planes/stats$')
+
+
+def plane_stats(state, ident, payload):
+    from flimkit_qupath_bridge import fitting
+
+    registry = _registry(state)
+    try:
+        meta = registry.metadata(ident)
+    except KeyError:
+        raise RouteError(404, f'no such dataset: {ident}')
+    payload = payload or {}
+    collection = payload.get('rois')
+    if not isinstance(collection, dict) or collection.get('type') != 'FeatureCollection':
+        raise RouteError(400, 'rois must be a GeoJSON FeatureCollection')
+    binning = int(payload.get('binning', 1))
+    asked = payload.get('planes')
+    if not asked:
+        asked = [n for n in registry.plane_names(ident) if n.startswith('tau')]
+    if not asked:
+        raise RouteError(409, 'this dataset has no fitted planes yet; fit per-pixel first')
+    shape = (meta['height'], meta['width'])
+    masks = fitting.masks_from_geojson(collection, shape, binning=binning)
+    found = []
+    for name, mask in masks:
+        region = {'name': name, 'planes': {}}
+        covered = np.asarray(mask, dtype=bool)
+        region['n_pixels'] = int(covered.sum())
+        for plane in asked:
+            array = registry.plane(ident, plane)
+            if array is None:
+                continue
+            array = np.asarray(array, dtype=float)
+            if array.shape != covered.shape:
+                raise RouteError(
+                    409,
+                    f'{plane} is {array.shape} and the mask is {covered.shape}; '
+                    f'fit per-pixel at the binning you are asking stats for')
+            values = array[covered]
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                region['planes'][plane] = None
+                continue
+            region['planes'][plane] = {
+                'mean': float(values.mean()),
+                'median': float(np.median(values)),
+                'std': float(values.std()),
+                'n': int(values.size),
+                'unit': UNITS.get(plane) or registry.plane_unit(ident, plane),
+            }
+        found.append(region)
+    return {'dataset': ident, 'binning': binning, 'regions': found}
+
+
+def _plane_stack(registry, ident, options, binning):
+    from flimkit_qupath_bridge.server import encode_image
+
+    asked = [n for n in (options.get('planes', [''])[0]).split(',') if n]
+    if not asked:
+        raise RouteError(400, 'planes must name at least one plane, comma separated')
+    layers = []
+    names = []
+    for name in asked:
+        if name == 'intensity':
+            try:
+                array = registry.intensity(ident, binning=binning)
+            except StackTooLarge as exc:
+                raise RouteError(413, str(exc))
+        else:
+            array = registry.plane(ident, name)
+            if array is None:
+                raise RouteError(404, f'no such plane: {name}')
+        array = _shrink(_crop(np.asarray(array), options), options)
+        layers.append(np.asarray(array, dtype=np.float32))
+        unit = UNITS.get(name) or registry.plane_unit(ident, name)
+        names.append(f'{name} ({unit})' if unit else name)
+    shapes = {layer.shape for layer in layers}
+    if len(shapes) != 1:
+        raise RouteError(409, f'these planes are not the same shape: {sorted(shapes)}')
+    stacked = np.stack(layers)
+    buffer = BytesIO()
+    tifffile.imwrite(buffer, stacked, ome=True, photometric='minisblack',
+                     metadata={'axes': 'CYX', 'Channel': {'Name': names}})
+    return buffer.getvalue(), ','.join(names), binning, stacked.shape
 
 
 def _crop(array, options):

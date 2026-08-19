@@ -97,10 +97,8 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
             if not self._local_only():
                 return
             if self.path == '/v1/status':
-                self._send_json(200, {
-                    'protocol': 'flimkit-qupath',
-                    'protocol_version': 1,
-                })
+                from flimkit_qupath_bridge.version import report
+                self._send_json(200, report())
                 return
             if self._dataset_get():
                 return
@@ -196,6 +194,14 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                 self._route(lambda routes: routes.run_pipeline(state, self._read_json()))
                 return
             from flimkit_qupath_bridge import dataset_routes as _routes
+            stats_match = _routes.PLANE_STATS_RE.match(self.path)
+            if stats_match:
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(
+                    lambda r: r.plane_stats(state, stats_match.group(1), self._read_json()))
+                return
             pixels_match = _routes.FIT_PIXELS_RE.match(self.path)
             if pixels_match:
                 if not self._authorized():

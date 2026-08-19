@@ -20,11 +20,15 @@ import java.util.List;
 
 public class FlimKitImageServer extends AbstractTileableImageServer {
 
+    private static final org.slf4j.Logger logger =
+            org.slf4j.LoggerFactory.getLogger(FlimKitImageServer.class);
+
     private final URI uri;
     private final String[] args;
     private final BridgeClient client;
     private final String datasetId;
     private final String sourcePath;
+    private final JsonObject opened;
     private final ImageServerMetadata metadata;
 
     FlimKitImageServer(URI uri, Discovery.Details details, String... args) throws IOException,
@@ -39,8 +43,10 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         this.sourcePath = opened.has("path") && !opened.get("path").isJsonNull()
                 ? opened.get("path").getAsString()
                 : path;
+        this.opened = opened;
         this.metadata = buildMetadata(opened, path);
     }
+
 
     private static final int TILE = 512;
 
@@ -84,6 +90,7 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         }
         return builder.build();
     }
+
 
     @Override
     protected BufferedImage readTile(TileRequest request) throws IOException {
@@ -129,6 +136,10 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
     @Override
     public java.util.Collection<URI> getURIs() {
         return List.of(uri);
+    }
+
+    JsonObject getOpenedMetadata() {
+        return opened;
     }
 
     String getDatasetId() {

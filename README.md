@@ -71,7 +71,25 @@ GET  /v1/pipeline/defaults
 
 The tiles do not have to sit beside the container. The bridge looks in the directory you name, then beside the container, then in the directories next to it, which is where Leica puts them.
 
-`pipeline` chooses between `stitch_fit`, which stitches the canvas and fits it, and `tile_fit`, which fits each tile after a global summed fit and assembles the maps. Both run as jobs, so `GET /v1/jobs/{id}` reports progress and `DELETE` cancels. Cancelling stops the run at the next tile, or at the next stage boundary once fitting is done.
+`Fit per-pixel lifetimes...` runs the per-pixel fit on the open FLIM image and adds the maps to the project when it finishes, as one image named after the source with a channel each: the intensity in photons, and `tau_mean_amp`, `tau_mean_int` and a `tau_N` per component in nanoseconds. `GET /v1/datasets/{id}/planes/stack.tif?planes=a,b,c` builds it, a float32 OME-TIFF carrying the channel names. They are the values, not a colour render, so QuPath's own display settings do the colouring and a measurement reads back in ns.
+
+The FLIM image keeps one uint16 intensity channel whatever has been fitted. The lifetime channels live on the maps image instead. QuPath persists a server's metadata inside the project entry's builder, so a server that answers with a different channel count the next time it opens fails to load with an index out of bounds, and there is no version of that which works. Keeping the FLIM image uint16 also keeps it openable by the alignment extension.
+
+The acquisition goes onto both entries as well: the histogram window in nanoseconds and how many bins it covers, the laser rate in MHz, the laser period, and the TCSPC resolution in picoseconds. The window and the period are not the same number and both are reported, a 19.505 MHz laser has a 51.269 ns period while its histogram spans 51.297 ns over 529 bins. The rate comes from the file rather than being derived, and is left out rather than guessed when the reader does not carry one.
+
+The fit itself is recorded too. The global summed fit that seeds the per-pixel pass goes into the project entry description and metadata for both the maps and the source image: the lifetimes, the fractions, the reduced chi-squared and which IRF was used. Any annotations on the source image get a mean and a median per fitted map, through `POST /v1/datasets/{id}/planes/stats`, which takes a GeoJSON FeatureCollection and answers per region and per plane. It refuses with 409 before a per-pixel fit has run, and again if the mask and the maps are different shapes because the fit ran at another binning.
+
+`GET /v1/status` reports `bridge_version` and `flimkit_version` alongside the protocol version, and QuPath warns when the extension and the bridge are not the same version. It also re-reads the discovery file before every call, because each bridge start mints a new token, so a restarted bridge used to turn every request into a bare 401 until you hit Connect again. A manually entered address is left alone.
+
+Summed fits run with `workers=1`. `fit_summed` defaults to `workers=-1`, which starts a process pool inside the server for every fit, and on a spawn platform each worker re-imports FLIMKit. It measured slower than a single worker even on a 10 core machine, 1.74s against 1.15s.
+
+Per-pixel fits use the GPU. They were pinned to the CPU so the row banding could report progress, which cost the 4x the GPU gives on a full field. Each band goes to the GPU now, and `use_gpu` turns that off.
+
+When a pipeline job finishes and a QuPath project is open, the maps go into it. The bridge writes a real-unit intensity image beside the run (uint16 when the photon counts fit, float32 otherwise) and points QuPath at that and at the full-range lifetime TIFF, so both carry photons and nanoseconds rather than a display scaling.
+
+The cap on decoding a stack whole is a quarter of the machine's memory, with a 2 GiB floor, so a 1024 square field at 529 bins (2.22 GB) goes through on anything with more than 8 GB and an 8 GB laptop behaves as it did. `FLIMKIT_BRIDGE_MAX_STACK_BYTES` overrides it either way. When a stack is still over the cap, QuPath reads the suggested binning out of the refusal and offers to fit again at it.
+
+`pipeline` chooses between `tile_fit`, the default, which fits each tile after a global summed fit and assembles the maps, and `stitch_fit`, which stitches the raw photons into one canvas and fits that. `tile_fit` is the default because `stitch_fit` writes the whole photon cube to disk before it fits anything: a 124 tile mosaic at 512 square is a 5581 square canvas, which is 57 GB at 459 bins. Both run as jobs, so `GET /v1/jobs/{id}` reports progress and `DELETE` cancels. Cancelling stops the run at the next tile, or at the next stage boundary once fitting is done.
 
 Outputs are written to disk, and the output directory can be reopened as a dataset:
 

@@ -9,13 +9,29 @@ DEFAULT_PLANE_BUDGET = 512 * 1024 * 1024
 DEFAULT_MAX_STACK = 2 * 1024 * 1024 * 1024
 
 
+def default_max_stack():
+    override = os.environ.get('FLIMKIT_BRIDGE_MAX_STACK_BYTES')
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    try:
+        import psutil
+        share = int(psutil.virtual_memory().total * 0.25)
+        return max(DEFAULT_MAX_STACK, share)
+    except Exception:
+        return DEFAULT_MAX_STACK
+
+
 class StackTooLarge(Exception):
 
     def __init__(self, estimated_bytes, limit_bytes, suggest_binning):
         super().__init__(
             f'decoding this stack needs about {estimated_bytes / 1e9:.2f} GB, '
             f'over the {limit_bytes / 1e9:.2f} GB limit; '
-            f'try binning={suggest_binning}')
+            f'try binning={suggest_binning}, or raise '
+            f'FLIMKIT_BRIDGE_MAX_STACK_BYTES above it')
         self.estimated_bytes = estimated_bytes
         self.limit_bytes = limit_bytes
         self.suggest_binning = suggest_binning
@@ -43,7 +59,18 @@ class _FlimFileReader:
             'tcspc_res': float(self._file.tcspc_res),
             'channels': self._active_channels(),
             'pixel_size_um': float(pixel_size) if pixel_size else None,
+            'time_range_ns': float(self._file.n_bins) * float(self._file.tcspc_res) * 1e9,
+            'sync_rate_mhz': self._sync_rate_mhz(),
+            'period_ns': self._period_ns(),
         }
+
+    def _sync_rate_mhz(self):
+        rate = getattr(self._file, 'sync_rate', 0) or 0
+        return round(float(rate) / 1e6, 4) if rate else None
+
+    def _period_ns(self):
+        period = getattr(self._file, 'period_ns', 0) or 0
+        return round(float(period), 4) if period else None
 
     def _dimensions(self, tags):
         width, height = self._file.n_x, self._file.n_y
@@ -140,10 +167,10 @@ class _Entry:
 class DatasetRegistry:
 
     def __init__(self, opener=None, plane_budget_bytes=DEFAULT_PLANE_BUDGET,
-                 max_stack_bytes=DEFAULT_MAX_STACK):
+                 max_stack_bytes=None):
         self._opener = opener or _default_opener
         self._plane_budget = plane_budget_bytes
-        self._max_stack = max_stack_bytes
+        self._max_stack = max_stack_bytes if max_stack_bytes else default_max_stack()
         self._lock = threading.RLock()
         self._by_key = {}
         self._by_id = {}
@@ -235,6 +262,9 @@ class DatasetRegistry:
             'tcspc_res': meta['tcspc_res'],
             'channels': meta['channels'],
             'pixel_size_um': meta['pixel_size_um'],
+            'time_range_ns': meta.get('time_range_ns'),
+            'sync_rate_mhz': meta.get('sync_rate_mhz'),
+            'period_ns': meta.get('period_ns'),
             'estimated_stack_bytes': estimates,
             'planes': self.plane_names(ident),
             'n_tiles': meta.get('n_tiles'),

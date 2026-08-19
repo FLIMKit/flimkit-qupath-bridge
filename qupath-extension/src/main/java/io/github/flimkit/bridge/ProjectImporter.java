@@ -14,6 +14,18 @@ public class ProjectImporter {
 
     private ProjectImporter() {}
 
+    public static Path storeBesideProject(Project<BufferedImage> project, String imageId,
+                                          Path downloaded, String suffix) throws IOException {
+        Path projectPath = project.getPath();
+        Path directory = projectPath == null
+                ? Files.createTempDirectory("flimkit-")
+                : projectPath.getParent().resolve("flimkit");
+        Files.createDirectories(directory);
+        Path target = directory.resolve(imageId + suffix);
+        Files.move(downloaded, target, StandardCopyOption.REPLACE_EXISTING);
+        return target;
+    }
+
     public static Path storeBesideProject(Project<BufferedImage> project,
                                           String imageId, Path downloaded) throws IOException {
         Path projectPath = project.getPath();
@@ -24,6 +36,17 @@ public class ProjectImporter {
         Path target = directory.resolve(imageId + ".tif");
         Files.move(downloaded, target, StandardCopyOption.REPLACE_EXISTING);
         return target;
+    }
+
+    public static ProjectImageEntry<BufferedImage> addNamed(
+            Project<BufferedImage> project, Path file, String name) throws IOException {
+        var support = ImageServerProvider.getPreferredUriImageSupport(
+                BufferedImage.class, file.toAbsolutePath().toString());
+        if (support == null || support.getBuilders().isEmpty())
+            throw new IOException("QuPath cannot open " + file);
+        var entry = project.addImage(support.getBuilders().get(0));
+        entry.setImageName(name);
+        return entry;
     }
 
     public static ProjectImageEntry<BufferedImage> addToProject(

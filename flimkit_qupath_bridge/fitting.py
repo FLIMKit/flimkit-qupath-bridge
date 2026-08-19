@@ -1,6 +1,9 @@
 import numpy as np
 
 SCHEMA = (
+    {'key': 'fit_model', 'label': 'Model', 'type': 'choice',
+     'choices': ('reconv', 'tail'), 'applies_to': ('roi', 'per_pixel'),
+     'advanced': False, 'default': 'reconv'},
     {'key': 'n_exp', 'label': 'Exponentials', 'type': 'int', 'min': 1, 'max': 3,
      'applies_to': ('roi', 'per_pixel'), 'advanced': False, 'default': 2},
     {'key': 'tau_min_ns', 'label': 'Minimum tau (ns)', 'type': 'float',
@@ -30,6 +33,11 @@ SCHEMA = (
     {'key': 'cost_function', 'label': 'Cost function', 'type': 'choice',
      'choices': ('poisson', 'chi2'), 'applies_to': ('roi', 'per_pixel'),
      'advanced': True, 'default': 'poisson'},
+    {'key': 'optimizer', 'label': 'Optimizer', 'type': 'choice',
+     'choices': ('de', 'lm_multistart'), 'applies_to': ('roi', 'per_pixel'),
+     'advanced': True, 'default': 'de'},
+    {'key': 'use_gpu', 'label': 'Use the GPU for per-pixel', 'type': 'bool',
+     'applies_to': ('per_pixel',), 'advanced': False, 'default': True},
     {'key': 'fit_bg', 'label': 'Fit background', 'type': 'bool',
      'applies_to': ('roi', 'per_pixel'), 'advanced': True, 'default': True},
     {'key': 'fit_sigma', 'label': 'Fit IRF broadening', 'type': 'bool',
@@ -167,18 +175,33 @@ def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
 
 
 def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
-    from flimkit.FLIM.fitters import fit_summed
+    from flimkit.FLIM.fitters import fit_summed, fit_summed_tail
     decay = np.asarray(decay, dtype=float)
-    irf, irf_source = build_irf(n_bins, tcspc_res, decay, cached=irf_prompt,
-                                params=params)
-    popt, summary = fit_summed(
-        decay, tcspc_res, n_bins, irf,
-        False, bool(params['fit_bg']), bool(params['fit_sigma']),
-        int(params['n_exp']),
-        float(params['tau_min_ns']),
-        float(params['tau_max_ns']),
-        cost_function=params['cost_function'],
-    )
+    if params.get('fit_model') == 'tail':
+        irf_source = 'none, the tail fit ignores the instrument response'
+        popt, summary = fit_summed_tail(
+            decay, tcspc_res, n_bins,
+            bool(params['fit_bg']),
+            int(params['n_exp']),
+            float(params['tau_min_ns']),
+            float(params['tau_max_ns']),
+            cost_function=params['cost_function'],
+            optimizer=params['optimizer'],
+            workers=1,
+        )
+    else:
+        irf, irf_source = build_irf(n_bins, tcspc_res, decay, cached=irf_prompt,
+                                    params=params)
+        popt, summary = fit_summed(
+            decay, tcspc_res, n_bins, irf,
+            False, bool(params['fit_bg']), bool(params['fit_sigma']),
+            int(params['n_exp']),
+            float(params['tau_min_ns']),
+            float(params['tau_max_ns']),
+            cost_function=params['cost_function'],
+            optimizer=params['optimizer'],
+            workers=1,
+        )
     taus = [float(t) for t in summary['taus_ns']]
     amps = [float(a) for a in summary['amps']]
     total = float(np.sum(amps))
@@ -196,6 +219,7 @@ def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
         'n_pixels': int(n_pixels),
         'irf_source': irf_source,
         'n_exp': int(params['n_exp']),
+        'fit_model': params.get('fit_model', 'reconv'),
     }
 
 
@@ -207,25 +231,45 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
     call reports nothing and cannot be interrupted. Banding gives a progress
     tick and a cancellation point per band on every backend, and caps peak
     memory. global_popt is fitted once over the whole field so the bands stay
-    independent of each other.
+    independent of each other. Each band still goes to the GPU when there is
+    one, unless use_gpu is off.
     """
-    from flimkit.FLIM.fitters import fit_per_pixel, fit_summed
+    from flimkit.FLIM.fitters import fit_per_pixel, fit_summed, fit_summed_tail
     stack = np.asarray(stack)
     height = stack.shape[0]
     bands = max(1, min(int(bands), height))
     summed = stack.reshape(-1, stack.shape[2]).sum(axis=0).astype(float)
-    irf, irf_source = build_irf(n_bins, tcspc_res, summed, cached=irf_prompt,
-                                params=params)
-    global_popt, summary = fit_summed(
-        summed, tcspc_res, n_bins, irf,
-        False, bool(params['fit_bg']), bool(params['fit_sigma']),
-        int(params['n_exp']),
-        float(params['tau_min_ns']),
-        float(params['tau_max_ns']),
-        cost_function=params['cost_function'],
-    )
+    fit_model = params.get('fit_model', 'reconv')
+    if fit_model == 'tail':
+        irf = None
+        irf_source = 'none, the tail fit ignores the instrument response'
+        global_popt, summary = fit_summed_tail(
+            summed, tcspc_res, n_bins,
+            bool(params['fit_bg']),
+            int(params['n_exp']),
+            float(params['tau_min_ns']),
+            float(params['tau_max_ns']),
+            cost_function=params['cost_function'],
+            optimizer=params['optimizer'],
+            workers=1,
+        )
+    else:
+        irf, irf_source = build_irf(n_bins, tcspc_res, summed, cached=irf_prompt,
+                                    params=params)
+        global_popt, summary = fit_summed(
+            summed, tcspc_res, n_bins, irf,
+            False, bool(params['fit_bg']), bool(params['fit_sigma']),
+            int(params['n_exp']),
+            float(params['tau_min_ns']),
+            float(params['tau_max_ns']),
+            cost_function=params['cost_function'],
+            optimizer=params['optimizer'],
+            workers=1,
+        )
     edges = np.linspace(0, height, bands + 1).astype(int)
     collected = []
+    where = 'the GPU' if params.get('use_gpu', True) else 'the CPU'
+    print(f'  Per-pixel fit over {height} rows in {bands} bands on {where}...')
     for index in range(bands):
         if cancel is not None and cancel.is_set():
             return None
@@ -240,9 +284,11 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             tau_min_ns=float(params['tau_min_ns']),
             tau_max_ns=float(params['tau_max_ns']),
             fit_idx=summary.get('fit_idx'),
-            use_gpu=False,
+            use_gpu='auto' if params.get('use_gpu', True) else False,
+            fit_model=fit_model,
         )
         collected.append(maps)
+        print(f'    band {index + 1} of {bands}')
         if progress is not None:
             progress(index + 1, bands, f'band {index + 1} of {bands}')
     if not collected:
