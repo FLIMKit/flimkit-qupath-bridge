@@ -59,11 +59,14 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                 null,
                 menuItem("Add FLIMKit images to project", () -> addImages(qupath)),
                 null,
+                menuItem("Stitch and fit a mosaic...", () -> stitchAndFit(qupath)),
                 menuItem("Fit ROI decays...", () -> fitRois(qupath)),
                 menuItem("Phasor plot...", () -> openPhasor(qupath)),
                 null,
                 menuItem("Send annotations to FLIMKit", () -> sendAnnotations(qupath)),
-                menuItem("Fetch ROIs from FLIMKit", () -> fetchAnnotations(qupath)));
+                menuItem("Fetch ROIs from FLIMKit", () -> fetchAnnotations(qupath)),
+                null,
+                menuItem("Reconnect this project to FLIMKit", () -> reconnect(qupath)));
     }
 
     private static MenuItem menuItem(String label, Runnable action) {
@@ -122,6 +125,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             return;
         }
         var client = new BridgeClient(baseUrl, token);
+        var manifest = ProjectManifest.open(project);
         var added = new ArrayList<String>();
         var skipped = new ArrayList<String>();
         for (String imageId : List.of("intensity", "lifetime")) {
@@ -132,6 +136,9 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                 var entry = ProjectImporter.addToProject(
                         project, stored, imageId, fetched.valueUnit());
                 added.add(entry.getImageName());
+                if (manifest != null)
+                    manifest.recordImage(imageId, stored.getFileName().toString(),
+                            fetched.valueUnit(), servedSource(client));
             } catch (Exception e) {
                 logger.warn("Could not add {}", imageId, e);
                 skipped.add(imageId);
@@ -147,6 +154,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         } catch (IOException e) {
             logger.error("Could not save the project", e);
         }
+        saveManifest(manifest);
         qupath.refreshProject();
         String message = "Added " + String.join(", ", added);
         if (!skipped.isEmpty())
@@ -209,19 +217,195 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             var body = new JsonObject();
             body.add("params", chosen);
             body.add("rois", JsonParser.parseString(toFeatureCollection(selected)));
-            var reply = JsonParser.parseString(
-                    client.fitRois(bridged.getDatasetId(), body.toString()))
-                    .getAsJsonObject();
-            int applied = FitResults.applyToObjects(reply, selected);
-            imageData.getHierarchy().fireObjectMeasurementsChangedEvent(this, selected);
-            var failures = FitResults.errors(reply);
-            String message = "Fitted " + applied + " region(s)";
-            if (!failures.isEmpty())
-                message += "\n\nNot fitted:\n" + String.join("\n", failures);
-            Dialogs.showInfoNotification(getName(), message);
+            inBackground("Fitting " + selected.size() + " region(s)",
+                    () -> client.fitRois(bridged.getDatasetId(), body.toString()),
+                    raw -> {
+                        var reply = JsonParser.parseString(raw).getAsJsonObject();
+                        int applied = FitResults.applyToObjects(reply, selected);
+                        imageData.getHierarchy()
+                                .fireObjectMeasurementsChangedEvent(this, selected);
+                        rememberFit(qupath, bridged, chosen, selected, reply);
+                        var failures = FitResults.errors(reply);
+                        String message = "Fitted " + applied + " region(s)";
+                        if (!failures.isEmpty())
+                            message += "\n\nNot fitted:\n" + String.join("\n", failures);
+                        Dialogs.showInfoNotification(getName(), message);
+                    },
+                    problem -> Dialogs.showErrorMessage(getName(),
+                            "Could not fit\n\n" + problem));
         } catch (Exception e) {
             logger.error("ROI fitting failed", e);
             Dialogs.showErrorMessage(getName(), "Could not fit\n\n" + e.getMessage());
+        }
+    }
+
+    private <T> void inBackground(String title, java.util.concurrent.Callable<T> work,
+                                  java.util.function.Consumer<T> onDone,
+                                  java.util.function.Consumer<String> onFailed) {
+        var waiting = new javafx.stage.Stage();
+        waiting.setTitle(title);
+        var label = new javafx.scene.control.Label(title + "...");
+        label.setMinWidth(320);
+        var bar = new javafx.scene.control.ProgressBar();
+        bar.setMaxWidth(Double.MAX_VALUE);
+        var box = new javafx.scene.layout.VBox(10, label, bar);
+        box.setPadding(new javafx.geometry.Insets(14));
+        waiting.setScene(new javafx.scene.Scene(box));
+        waiting.show();
+        var thread = new Thread(() -> {
+            try {
+                T value = work.call();
+                javafx.application.Platform.runLater(() -> {
+                    waiting.close();
+                    onDone.accept(value);
+                });
+            } catch (Exception e) {
+                logger.error("{} failed", title, e);
+                javafx.application.Platform.runLater(() -> {
+                    waiting.close();
+                    onFailed.accept(e.getMessage());
+                });
+            }
+        }, "flimkit-bridge-call");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private static String servedSource(BridgeClient client) {
+        try {
+            var listed = JsonParser.parseString(client.datasets()).getAsJsonObject();
+            var array = listed.getAsJsonArray("datasets");
+            if (array != null && array.size() > 0)
+                return array.get(0).getAsJsonObject().get("path").getAsString();
+        } catch (Exception e) {
+            logger.debug("Could not read the open datasets: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private void rememberFit(QuPathGUI qupath, FlimKitImageServer bridged,
+                             JsonObject params, java.util.List<PathObject> annotations,
+                             JsonObject reply) {
+        var project = qupath.getProject();
+        if (project == null)
+            return;
+        var manifest = ProjectManifest.open(project);
+        if (manifest == null)
+            return;
+        manifest.recordFit(bridged.getSourcePath(), params, annotations, reply);
+        saveManifest(manifest);
+    }
+
+    private void saveManifest(ProjectManifest manifest) {
+        if (manifest == null)
+            return;
+        try {
+            manifest.save();
+        } catch (IOException e) {
+            logger.warn("Could not write the FLIMKit manifest", e);
+        }
+    }
+
+    private void reconnect(QuPathGUI qupath) {
+        var project = qupath.getProject();
+        if (project == null) {
+            Dialogs.showErrorMessage(getName(), "No project is open.");
+            return;
+        }
+        var manifest = ProjectManifest.open(project);
+        if (manifest == null) {
+            Dialogs.showErrorMessage(getName(),
+                    "This project has not been saved anywhere, so there is nothing "
+                            + "recorded to reconnect.");
+            return;
+        }
+        var sources = manifest.sources();
+        if (sources.isEmpty()) {
+            Dialogs.showInfoNotification(getName(),
+                    "Nothing recorded yet in " + manifest.path().getFileName());
+            return;
+        }
+        var client = new BridgeClient(baseUrl, token);
+        var opened = new ArrayList<String>();
+        var missing = new ArrayList<String>();
+        for (String source : sources) {
+            try {
+                client.openDataset(source);
+                opened.add(java.nio.file.Paths.get(source).getFileName().toString());
+            } catch (Exception e) {
+                logger.warn("Could not reopen {}", source, e);
+                missing.add(java.nio.file.Paths.get(source).getFileName().toString());
+            }
+        }
+        String message = opened.isEmpty()
+                ? "Nothing could be reopened"
+                : "FLIMKit reopened " + String.join(", ", opened);
+        if (!missing.isEmpty())
+            message += "\n\nNot found:\n" + String.join("\n", missing)
+                    + "\n\nThe files may have moved since the fits were recorded.";
+        Dialogs.showInfoNotification(getName(), message);
+    }
+
+    private java.io.File askForTiles(java.io.File container) {
+        boolean carryOn = Dialogs.showConfirmDialog(getName(),
+                "FLIMKit could not find the tiles listed in " + container.getName()
+                        + " near that file.\n\nChoose the folder holding them.");
+        if (!carryOn)
+            return null;
+        var chooser = new javafx.stage.DirectoryChooser();
+        chooser.setTitle("Where are the tiles?");
+        chooser.setInitialDirectory(container.getParentFile());
+        return chooser.showDialog(null);
+    }
+
+    private void stitchAndFit(QuPathGUI qupath) {
+        var chooser = new javafx.stage.FileChooser();
+        chooser.setTitle("Choose the file that holds the tile positions");
+        chooser.getExtensionFilters().add(
+                new javafx.stage.FileChooser.ExtensionFilter(
+                        "Leica tile metadata", "*.lif", "*.xlif"));
+        var container = chooser.showOpenDialog(null);
+        if (container == null)
+            return;
+        try {
+            var client = new BridgeClient(baseUrl, token);
+            var defaults = JsonParser.parseString(client.pipelineDefaults()).getAsJsonObject();
+            var chosen = new FitDialog(defaults).prompt("Stitch and fit", "pipeline");
+            if (chosen == null)
+                return;
+            var body = new JsonObject();
+            body.addProperty("container", container.getAbsolutePath());
+            body.add("params", chosen);
+            String reply;
+            try {
+                reply = client.runPipeline(body.toString());
+            } catch (java.io.IOException notFound) {
+                if (!notFound.getMessage().contains("404"))
+                    throw notFound;
+                var folder = askForTiles(container);
+                if (folder == null)
+                    return;
+                body.addProperty("tile_dir", folder.getAbsolutePath());
+                reply = client.runPipeline(body.toString());
+            }
+            var started = JsonParser.parseString(reply).getAsJsonObject();
+            String jobId = started.get("job").getAsString();
+            int tiles = started.get("n_tiles").getAsInt();
+            String outputDir = started.get("output_dir").getAsString();
+            new BridgeJob(client, jobId, "FLIMKit: " + tiles + " tiles").watch(
+                    status -> Dialogs.showInfoNotification(getName(),
+                            "Finished. FLIMKit wrote its maps to\n" + outputDir),
+                    problem -> {
+                        if (problem == null)
+                            Dialogs.showInfoNotification(getName(), "Cancelled");
+                        else
+                            Dialogs.showErrorMessage(getName(),
+                                    "Stitch and fit failed\n\n" + problem);
+                    });
+        } catch (Exception e) {
+            logger.error("Could not start the pipeline", e);
+            Dialogs.showErrorMessage(getName(),
+                    "Could not start stitching\n\n" + e.getMessage());
         }
     }
 

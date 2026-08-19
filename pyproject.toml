@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'flimkit-qupath-bridge'
-version = '0.1.1'
+version = '0.2.0'
 description = 'Direct image and ROI exchange between FLIMKit and QuPath'
 readme = 'README.md'
 requires-python = '>=3.12'
@@ -27,6 +27,9 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ['pytest']
+
+[project.scripts]
+flimkit-bridge = 'flimkit_qupath_bridge.headless:main'
 
 [project.urls]
 Homepage = 'https://github.com/FLIMKit/flimkit-qupath-bridge'

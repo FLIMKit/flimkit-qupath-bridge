@@ -7,18 +7,25 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.Control;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.Node;
+
+import javafx.stage.FileChooser;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class FitDialog {
 
-    private final Map<String, Control> controls = new LinkedHashMap<>();
+    private final Map<String, Node> controls = new LinkedHashMap<>();
     private final JsonObject values;
     private final JsonArray schema;
 
@@ -43,7 +50,7 @@ public class FitDialog {
             if (!appliesTo(entry, mode))
                 continue;
             String key = entry.get("key").getAsString();
-            Control control = controlFor(entry, key);
+            Node control = controlFor(entry, key);
             if (control == null)
                 continue;
             controls.put(key, control);
@@ -70,7 +77,9 @@ public class FitDialog {
         return false;
     }
 
-    private Control controlFor(JsonObject entry, String key) {
+    private Node controlFor(JsonObject entry, String key) {
+        if (!values.has(key) || values.get(key).isJsonNull())
+            return null;
         String type = entry.get("type").getAsString();
         switch (type) {
             case "int" -> {
@@ -95,6 +104,24 @@ public class FitDialog {
                 box.setValue(values.get(key).getAsString());
                 return box;
             }
+            case "path" -> {
+                var field = new TextField(values.get(key).getAsString());
+                field.setPromptText("FLIMKit's own default");
+                field.setPrefColumnCount(24);
+                HBox.setHgrow(field, Priority.ALWAYS);
+                var browse = new Button("Choose...");
+                browse.setOnAction(event -> {
+                    var chooser = new FileChooser();
+                    chooser.setTitle(entry.get("label").getAsString());
+                    var picked = chooser.showOpenDialog(field.getScene() == null
+                            ? null : field.getScene().getWindow());
+                    if (picked != null)
+                        field.setText(picked.getAbsolutePath());
+                });
+                var row = new HBox(6, field, browse);
+                row.setUserData(field);
+                return row;
+            }
             default -> {
                 return null;
             }
@@ -104,8 +131,13 @@ public class FitDialog {
     JsonObject collect() {
         var chosen = new JsonObject();
         for (var pair : controls.entrySet()) {
-            Control control = pair.getValue();
-            if (control instanceof Spinner<?> spinner)
+            Node control = pair.getValue();
+            if (control instanceof HBox row && row.getUserData() instanceof TextField field) {
+                String typed = field.getText() == null ? "" : field.getText().trim();
+                if (!typed.isBlank())
+                    chosen.addProperty(pair.getKey(), typed);
+            }
+            else if (control instanceof Spinner<?> spinner)
                 chosen.addProperty(pair.getKey(), (Number) spinner.getValue());
             else if (control instanceof CheckBox box)
                 chosen.addProperty(pair.getKey(), box.isSelected());

@@ -1,5 +1,6 @@
 import os
 import threading
+from pathlib import Path
 from collections import OrderedDict
 
 import numpy as np
@@ -74,7 +75,52 @@ class _FlimFileReader:
         return self._file.intensity_image(channel=channel, binning=binning)
 
 
+class _StitchedReader:
+
+    def __init__(self, path, channel):
+        from flimkit.formats.PTU.stitch import load_stitched_flim
+        self._stack, self._time, self._intensity, self._meta = load_stitched_flim(path)
+        self.lazy_stack = True
+
+    def metadata(self):
+        height, width = self._stack.shape[0], self._stack.shape[1]
+        return {
+            'format': 'stitched',
+            'modality': 'time',
+            'n_x': int(width),
+            'n_y': int(height),
+            'n_bins': int(self._meta['n_time_bins']),
+            'tcspc_res': float(self._meta['tcspc_resolution_ps']) * 1e-12,
+            'channels': [],
+            'pixel_size_um': float(self._meta.get('pixel_size_um') or 0) or None,
+            'n_tiles': self._meta.get('tiles_processed'),
+        }
+
+    def raw_stack(self, channel, binning):
+        if binning != 1:
+            raise ValueError('a stitched canvas is served at binning 1')
+        return self._stack
+
+    def intensity(self, channel, binning):
+        return self._intensity
+
+
+def is_stitched_output(path):
+    directory = Path(path)
+    if not directory.is_dir():
+        return False
+    metadata = list(directory.glob('*_metadata.json')) or (
+        [directory / 'metadata.json'] if (directory / 'metadata.json').exists() else [])
+    if not metadata:
+        return False
+    counts = (list(directory.glob('*_stitched_flim_counts.npy'))
+              or list(directory.glob('stitched_flim_counts.npy')))
+    return bool(counts)
+
+
 def _default_opener(path, channel):
+    if is_stitched_output(path):
+        return _StitchedReader(path, channel)
     return _FlimFileReader(path, channel)
 
 
@@ -154,6 +200,9 @@ class DatasetRegistry:
         with self._lock:
             return [self.metadata(i) for i in self._by_id]
 
+    def reader(self, ident):
+        return self._entry(ident).reader
+
     def _entry(self, ident):
         with self._lock:
             entry = self._by_id.get(ident)
@@ -188,10 +237,14 @@ class DatasetRegistry:
             'pixel_size_um': meta['pixel_size_um'],
             'estimated_stack_bytes': estimates,
             'planes': self.plane_names(ident),
+            'n_tiles': meta.get('n_tiles'),
         }
 
     def stack(self, ident, binning=1):
         entry = self._entry(ident)
+        if getattr(entry.reader, 'lazy_stack', False):
+            with entry.lock:
+                return entry.reader.raw_stack(entry.channel, binning)
         estimated = self.estimated_stack_bytes(ident, binning)
         if estimated > self._max_stack:
             suggest = binning

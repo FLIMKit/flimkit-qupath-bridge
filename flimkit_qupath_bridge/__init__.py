@@ -13,7 +13,8 @@ from flimkit.plugins import (
 )
 
 from flimkit_qupath_bridge import discovery
-from flimkit_qupath_bridge.server import BridgeState, create_server
+from flimkit_qupath_bridge.state import build_state
+from flimkit_qupath_bridge.server import bind
 
 FLIMKIT_PLUGIN_API = 1
 
@@ -35,24 +36,15 @@ def bridge_status():
 
 
 def _live_state(app):
-    state = BridgeState(images={}, units={})
+    state = build_state()
     state.app = app
     return state
-
-
-def _bind(token, state, port):
-    try:
-        return create_server('127.0.0.1', port, token, state, live=True)
-    except OSError:
-        if port == 0:
-            raise
-        return create_server('127.0.0.1', 0, token, state, live=True)
 
 
 def _start_server(app, port=DEFAULT_PORT):
     token = secrets.token_urlsafe(24)
     state = _live_state(app)
-    server = _bind(token, state, port)
+    server = bind('127.0.0.1', port, token, state, live=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, bound = server.server_address

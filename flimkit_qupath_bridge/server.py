@@ -104,6 +104,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                 return
             if self._dataset_get():
                 return
+            if self.path == '/v1/pipeline/defaults':
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(lambda r: r.pipeline_defaults(state))
+                return
             if self.path == '/v1/irfs':
                 if not self._authorized():
                     self.send_error(401)
@@ -182,6 +188,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     self.send_error(401)
                     return
                 self._route(lambda routes: routes.open_dataset(state, self._read_json()))
+                return
+            if self.path == '/v1/pipeline':
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(lambda routes: routes.run_pipeline(state, self._read_json()))
                 return
             from flimkit_qupath_bridge import dataset_routes as _routes
             pixels_match = _routes.FIT_PIXELS_RE.match(self.path)
@@ -377,3 +389,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
     server = Server((host, port), Handler)
     server.state = state
     return server
+
+
+def bind(host, port, token, state, live=False):
+    try:
+        return create_server(host, port, token, state, live=live)
+    except OSError:
+        if port == 0:
+            raise
+        return create_server(host, 0, token, state, live=live)

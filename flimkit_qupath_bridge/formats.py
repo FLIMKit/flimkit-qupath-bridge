@@ -42,6 +42,16 @@ def identify(path):
     resolved = os.path.expanduser(str(path))
     if not os.path.exists(resolved):
         raise PathProblem(404, f'no such file: {resolved}')
+    if os.path.isdir(resolved):
+        from flimkit_qupath_bridge.datasets import is_stitched_output
+        if is_stitched_output(resolved):
+            return {
+                'recognised': True,
+                'format': 'stitched',
+                'modality': 'time',
+                'ambiguous': True,
+            }
+        raise PathProblem(400, f'not a stitched output directory: {resolved}')
     if not os.path.isfile(resolved):
         raise PathProblem(400, f'not a regular file: {resolved}')
     module = _flim_file()
