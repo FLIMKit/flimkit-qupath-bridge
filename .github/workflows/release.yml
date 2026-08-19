@@ -46,12 +46,20 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: false
           body: |
-            Two things to install, one on each side.
+            Two halves, one on each side.
 
-            **FLIMKit add-on**: install the wheel into the environment FLIMKit runs in, or drop it in `~/.flimkit/plugins/`. The bridge then starts with FLIMKit and adds a `Send to QuPath` button to the ROI panel.
+            The Python half comes from PyPI, into the environment FLIMKit runs in:
+
+            ```
+            pip install flimkit-qupath-bridge
+            ```
+
+            That pulls FLIMKit with it. The bridge then starts with FLIMKit and adds a `Send to QuPath` button to the ROI panel. `flimkit-bridge` is on the path as well, for the server without the FLIMKit window.
+
+            The wheel and sdist are attached below for anyone installing offline, or into `~/.flimkit/plugins/`.
 
             **QuPath extension**: drop `qupath-extension-flimkit-bridge-*.jar` into QuPath's extensions directory, normally `~/QuPath/v0.7/extensions`. It appears under `Extensions > FLIMKit bridge`.
 
             Co-registration needs the [QuPath alignment extension](https://github.com/qupath/qupath-extension-align), which QuPath does not ship. Without it you can still exchange images and ROIs, but only between images that already share a coordinate system.
 
-            Requires QuPath 0.7.0 or newer, Python 3.12 or newer, and a FLIMKit with the plugin bindings and startup hooks.
+            Requires QuPath 0.7.0 or newer, Python 3.12 or newer, and FLIMKit 0.12.0 or newer.
