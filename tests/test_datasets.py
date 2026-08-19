@@ -269,3 +269,53 @@ def test_sdt_has_no_pixel_size_rather_than_a_bogus_zero():
     meta = reg.metadata(reg.open(SDT_PATH))
 
     assert meta['pixel_size_um'] is None
+
+
+def test_metadata_reports_the_acquisition_window():
+    from flimkit_qupath_bridge import datasets
+
+    class _File:
+        n_bins = 529
+        tcspc_res = 9.696969697e-11
+        sync_rate = 19.505e6
+        period_ns = 51.2689
+        n_x = 512
+        n_y = 512
+        tags = {}
+        path = 'made-up.ptu'
+        n_channels = 1
+
+    reader = datasets._FlimFileReader.__new__(datasets._FlimFileReader)
+    reader._file = _File()
+    reader._format = 'ptu'
+    reader._modality = 'time'
+    reader._channel = None
+    meta = reader.metadata()
+    assert meta['time_range_ns'] == pytest.approx(51.2970, abs=1e-3)
+    assert meta['sync_rate_mhz'] == pytest.approx(19.505)
+    assert meta['period_ns'] == pytest.approx(51.2689)
+
+
+def test_the_window_is_absent_rather_than_wrong_without_a_laser_rate():
+    from flimkit_qupath_bridge import datasets
+
+    class _File:
+        n_bins = 256
+        tcspc_res = 5e-11
+        sync_rate = 0
+        period_ns = 0
+        n_x = 8
+        n_y = 8
+        tags = {}
+        path = 'made-up.ptu'
+        n_channels = 1
+
+    reader = datasets._FlimFileReader.__new__(datasets._FlimFileReader)
+    reader._file = _File()
+    reader._format = 'ptu'
+    reader._modality = 'time'
+    reader._channel = None
+    meta = reader.metadata()
+    assert meta['time_range_ns'] == pytest.approx(12.8)
+    assert meta['sync_rate_mhz'] is None
+    assert meta['period_ns'] is None

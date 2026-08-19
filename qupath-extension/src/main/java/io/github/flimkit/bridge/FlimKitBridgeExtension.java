@@ -590,11 +590,12 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             Path stored = ProjectImporter.storeBesideProject(
                     project, stem + "_lifetime_maps", fetched.file(), ".ome.tif");
             var entry = ProjectImporter.addNamed(project, stored, name);
-            describeFit(entry, summary, source, wanted);
+            var acquisition = bridged.getOpenedMetadata();
+            describeFit(entry, summary, source, wanted, acquisition);
             for (var other : project.getImageList()) {
                 if (source.equals(other.getImageName())
                         || stem.equals(other.getImageName()))
-                    describeFit(other, summary, source, wanted);
+                    describeFit(other, summary, source, wanted, acquisition);
             }
             if (manifest != null)
                 manifest.recordImage(stem + "_lifetime_maps",
@@ -685,11 +686,13 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
 
     private static void describeFit(qupath.lib.projects.ProjectImageEntry<BufferedImage> entry,
                                     JsonObject summary, String source,
-                                    java.util.List<String> planes) {
+                                    java.util.List<String> planes,
+                                    JsonObject acquisition) {
         if (entry == null || summary == null)
             return;
         var lines = new ArrayList<String>();
         lines.add("Fitted by FLIMKit from " + source);
+        describeAcquisition(entry, lines, acquisition);
         if (summary.has("n_exp"))
             lines.add("Components: " + summary.get("n_exp").getAsString());
         if (summary.has("taus_ns"))
@@ -712,6 +715,43 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         if (summary.has("n_exp"))
             entry.getMetadata().put("flimkit.n_exp", summary.get("n_exp").getAsString());
         entry.getMetadata().put("flimkit.source", source);
+    }
+
+    private static void describeAcquisition(
+            qupath.lib.projects.ProjectImageEntry<BufferedImage> entry,
+            java.util.List<String> lines, JsonObject acquisition) {
+        if (acquisition == null)
+            return;
+        Double range = number(acquisition, "time_range_ns");
+        Double rate = number(acquisition, "sync_rate_mhz");
+        Double period = number(acquisition, "period_ns");
+        Double resolution = number(acquisition, "tcspc_res");
+        if (range != null) {
+            lines.add(String.format("Histogram window: %.3f ns over %s bins",
+                    range, acquisition.has("n_bins")
+                            ? acquisition.get("n_bins").getAsString() : "?"));
+            entry.getMetadata().put("flimkit.time_range_ns", String.format("%.3f", range));
+        }
+        if (rate != null) {
+            lines.add(String.format("Laser: %.3f MHz", rate));
+            entry.getMetadata().put("flimkit.sync_rate_mhz", String.format("%.3f", rate));
+        }
+        if (period != null) {
+            lines.add(String.format("Laser period: %.3f ns", period));
+            entry.getMetadata().put("flimkit.period_ns", String.format("%.3f", period));
+        }
+        if (resolution != null)
+            lines.add(String.format("TCSPC resolution: %.2f ps", resolution * 1e12));
+    }
+
+    private static Double number(JsonObject payload, String key) {
+        if (payload == null || !payload.has(key) || payload.get(key).isJsonNull())
+            return null;
+        try {
+            return payload.get(key).getAsDouble();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private static String joinNumbers(JsonArray values) {

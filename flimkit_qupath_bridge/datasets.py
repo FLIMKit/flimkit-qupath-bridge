@@ -59,7 +59,18 @@ class _FlimFileReader:
             'tcspc_res': float(self._file.tcspc_res),
             'channels': self._active_channels(),
             'pixel_size_um': float(pixel_size) if pixel_size else None,
+            'time_range_ns': float(self._file.n_bins) * float(self._file.tcspc_res) * 1e9,
+            'sync_rate_mhz': self._sync_rate_mhz(),
+            'period_ns': self._period_ns(),
         }
+
+    def _sync_rate_mhz(self):
+        rate = getattr(self._file, 'sync_rate', 0) or 0
+        return round(float(rate) / 1e6, 4) if rate else None
+
+    def _period_ns(self):
+        period = getattr(self._file, 'period_ns', 0) or 0
+        return round(float(period), 4) if period else None
 
     def _dimensions(self, tags):
         width, height = self._file.n_x, self._file.n_y
@@ -251,6 +262,9 @@ class DatasetRegistry:
             'tcspc_res': meta['tcspc_res'],
             'channels': meta['channels'],
             'pixel_size_um': meta['pixel_size_um'],
+            'time_range_ns': meta.get('time_range_ns'),
+            'sync_rate_mhz': meta.get('sync_rate_mhz'),
+            'period_ns': meta.get('period_ns'),
             'estimated_stack_bytes': estimates,
             'planes': self.plane_names(ident),
             'n_tiles': meta.get('n_tiles'),

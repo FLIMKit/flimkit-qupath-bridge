@@ -29,6 +29,7 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
     private final String datasetId;
     private final String sourcePath;
     private final java.util.List<String> planes;
+    private final JsonObject opened;
     private final ImageServerMetadata metadata;
 
     FlimKitImageServer(URI uri, Discovery.Details details, String... args) throws IOException,
@@ -43,6 +44,7 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
         this.sourcePath = opened.has("path") && !opened.get("path").isJsonNull()
                 ? opened.get("path").getAsString()
                 : path;
+        this.opened = opened;
         this.planes = fittedPlanes();
         this.metadata = buildMetadata(opened, path);
     }
@@ -188,6 +190,10 @@ public class FlimKitImageServer extends AbstractTileableImageServer {
     @Override
     public java.util.Collection<URI> getURIs() {
         return List.of(uri);
+    }
+
+    JsonObject getOpenedMetadata() {
+        return opened;
     }
 
     String getDatasetId() {
