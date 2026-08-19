@@ -272,3 +272,76 @@ def test_a_plane_stack_needs_planes_named():
     with pytest.raises(dataset_routes.RouteError) as caught:
         dataset_routes.plane_tiff(state, 'ds_1', 'stack', '')
     assert caught.value.status == 400
+
+
+def test_plane_stats_refuses_before_a_fit_and_reports_after(tmp_path):
+    import numpy as np
+
+    from flimkit_qupath_bridge import dataset_routes
+
+    tau = np.full((8, 8), np.nan, dtype=np.float32)
+    tau[:4, :4] = 2.5
+
+    class _Registry:
+        def __init__(self, fitted):
+            self._fitted = fitted
+
+        def metadata(self, ident):
+            return {'height': 8, 'width': 8}
+
+        def plane_names(self, ident):
+            return ['intensity'] + (['tau_mean_amp'] if self._fitted else [])
+
+        def plane(self, ident, name):
+            return tau if (self._fitted and name == 'tau_mean_amp') else None
+
+        def plane_unit(self, ident, name):
+            return 'ns'
+
+    rois = {'type': 'FeatureCollection', 'features': [{
+        'type': 'Feature', 'properties': {'name': 'Corner'},
+        'geometry': {'type': 'Polygon', 'coordinates': [[
+            [0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]]}}]}
+
+    unfitted = type('S', (), {'datasets': _Registry(False)})()
+    with pytest.raises(dataset_routes.RouteError) as caught:
+        dataset_routes.plane_stats(unfitted, 'ds_1', {'rois': rois})
+    assert caught.value.status == 409
+
+    fitted = type('S', (), {'datasets': _Registry(True)})()
+    got = dataset_routes.plane_stats(fitted, 'ds_1', {'rois': rois})
+    region = got['regions'][0]
+    assert region['name'] == 'Corner'
+    stats = region['planes']['tau_mean_amp']
+    assert stats['unit'] == 'ns'
+    assert stats['mean'] == pytest.approx(2.5)
+    assert stats['n'] == stats['n']
+
+
+def test_plane_stats_refuses_a_mask_that_does_not_match_the_maps():
+    import numpy as np
+
+    from flimkit_qupath_bridge import dataset_routes
+
+    class _Registry:
+        def metadata(self, ident):
+            return {'height': 8, 'width': 8}
+
+        def plane_names(self, ident):
+            return ['tau_mean_amp']
+
+        def plane(self, ident, name):
+            return np.zeros((4, 4), dtype=np.float32)
+
+        def plane_unit(self, ident, name):
+            return 'ns'
+
+    rois = {'type': 'FeatureCollection', 'features': [{
+        'type': 'Feature', 'properties': {'name': 'All'},
+        'geometry': {'type': 'Polygon', 'coordinates': [[
+            [0, 0], [8, 0], [8, 8], [0, 8], [0, 0]]]}}]}
+    state = type('S', (), {'datasets': _Registry()})()
+    with pytest.raises(dataset_routes.RouteError) as caught:
+        dataset_routes.plane_stats(state, 'ds_1', {'rois': rois})
+    assert caught.value.status == 409
+    assert 'binning' in str(caught.value)

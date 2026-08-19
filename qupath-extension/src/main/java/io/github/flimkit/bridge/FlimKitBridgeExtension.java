@@ -557,8 +557,12 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         String datasetId = bridged.getDatasetId();
         String source = bridged.getMetadata().getName();
         var wanted = new ArrayList<String>();
+        JsonObject summary = null;
+        int binning = 1;
         try {
             var result = resultOf(client.jobResult(jobId));
+            if (result != null && result.has("binning"))
+                binning = result.get("binning").getAsInt();
             if (result != null && result.has("planes")) {
                 for (var element : result.getAsJsonArray("planes")) {
                     String name = element.getAsString();
@@ -566,6 +570,8 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                         wanted.add(name);
                 }
             }
+            if (result != null && result.has("global") && result.get("global").isJsonObject())
+                summary = result.getAsJsonObject("global");
         } catch (Exception e) {
             logger.warn("Could not read the per-pixel result", e);
         }
@@ -584,6 +590,12 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             Path stored = ProjectImporter.storeBesideProject(
                     project, stem + "_lifetime_maps", fetched.file(), ".ome.tif");
             var entry = ProjectImporter.addNamed(project, stored, name);
+            describeFit(entry, summary, source, wanted);
+            for (var other : project.getImageList()) {
+                if (source.equals(other.getImageName())
+                        || stem.equals(other.getImageName()))
+                    describeFit(other, summary, source, wanted);
+            }
             if (manifest != null)
                 manifest.recordImage(stem + "_lifetime_maps",
                         stored.getFileName().toString(),
@@ -591,14 +603,97 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             project.syncChanges();
             saveManifest(manifest);
             qupath.refreshProject();
-            Dialogs.showInfoNotification(getName(),
-                    "Added " + entry.getImageName() + "\n\n"
-                            + wanted.size() + " channels: " + String.join(", ", wanted));
+            int measured = measureAnnotations(qupath, client, datasetId, binning);
+            String message = "Added " + entry.getImageName() + "\n\n"
+                    + wanted.size() + " channels: " + String.join(", ", wanted);
+            if (measured > 0)
+                message += "\n\n" + measured + " annotation(s) measured on "
+                        + source;
+            Dialogs.showInfoNotification(getName(), message);
         } catch (Exception e) {
             logger.error("Could not add the lifetime maps", e);
             Dialogs.showErrorMessage(getName(),
                     "Fitted, but the maps could not be added\n\n" + e.getMessage());
         }
+    }
+
+    private int measureAnnotations(QuPathGUI qupath, BridgeClient client,
+                                   String datasetId, int binning) {
+        var imageData = qupath.getImageData();
+        if (imageData == null)
+            return 0;
+        var annotations = new ArrayList<>(imageData.getHierarchy().getAnnotationObjects());
+        if (annotations.isEmpty())
+            return 0;
+        try {
+            var body = new JsonObject();
+            body.addProperty("binning", binning);
+            body.add("rois", JsonParser.parseString(toFeatureCollection(annotations)));
+            var reply = JsonParser.parseString(
+                    client.planeStats(datasetId, body.toString())).getAsJsonObject();
+            var regions = reply.getAsJsonArray("regions");
+            int applied = 0;
+            for (int i = 0; i < regions.size() && i < annotations.size(); i++) {
+                var region = regions.get(i).getAsJsonObject();
+                var planes = region.getAsJsonObject("planes");
+                var list = annotations.get(i).getMeasurementList();
+                for (String plane : planes.keySet()) {
+                    if (planes.get(plane).isJsonNull())
+                        continue;
+                    var got = planes.getAsJsonObject(plane);
+                    String unit = got.has("unit") ? got.get("unit").getAsString() : "";
+                    String label = "FLIMKit " + plane + (unit.isBlank() ? "" : " (" + unit + ")");
+                    list.put(label + " mean", got.get("mean").getAsDouble());
+                    list.put(label + " median", got.get("median").getAsDouble());
+                }
+                list.close();
+                applied++;
+            }
+            imageData.getHierarchy()
+                    .fireObjectMeasurementsChangedEvent(this, annotations);
+            return applied;
+        } catch (Exception e) {
+            logger.warn("Could not measure the annotations against the maps", e);
+            return 0;
+        }
+    }
+
+    private static void describeFit(qupath.lib.projects.ProjectImageEntry<BufferedImage> entry,
+                                    JsonObject summary, String source,
+                                    java.util.List<String> planes) {
+        if (entry == null || summary == null)
+            return;
+        var lines = new ArrayList<String>();
+        lines.add("Fitted by FLIMKit from " + source);
+        if (summary.has("n_exp"))
+            lines.add("Components: " + summary.get("n_exp").getAsString());
+        if (summary.has("taus_ns"))
+            lines.add("Lifetimes (ns): " + joinNumbers(summary.getAsJsonArray("taus_ns")));
+        if (summary.has("fractions"))
+            lines.add("Fractions: " + joinNumbers(summary.getAsJsonArray("fractions")));
+        if (summary.has("chi2_r"))
+            lines.add("Reduced chi-squared: "
+                    + String.format("%.4f", summary.get("chi2_r").getAsDouble()));
+        if (summary.has("irf_source"))
+            lines.add("IRF: " + summary.get("irf_source").getAsString());
+        lines.add("Channels: " + String.join(", ", planes));
+        entry.setDescription(String.join("\n", lines));
+        if (summary.has("taus_ns"))
+            entry.getMetadata().put("flimkit.taus_ns",
+                    joinNumbers(summary.getAsJsonArray("taus_ns")));
+        if (summary.has("chi2_r"))
+            entry.getMetadata().put("flimkit.chi2_r",
+                    String.format("%.4f", summary.get("chi2_r").getAsDouble()));
+        if (summary.has("n_exp"))
+            entry.getMetadata().put("flimkit.n_exp", summary.get("n_exp").getAsString());
+        entry.getMetadata().put("flimkit.source", source);
+    }
+
+    private static String joinNumbers(JsonArray values) {
+        var parts = new ArrayList<String>();
+        for (var value : values)
+            parts.add(String.format("%.4f", value.getAsDouble()));
+        return String.join(", ", parts);
     }
 
     static JsonObject resultOf(String reply) {

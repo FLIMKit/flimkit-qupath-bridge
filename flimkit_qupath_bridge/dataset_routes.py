@@ -114,6 +114,60 @@ def plane_tiff(state, ident, name, query):
     return buffer.getvalue(), unit, binning, array.shape
 
 
+PLANE_STATS_RE = re.compile(r'^/v1/datasets/([^/]+)/planes/stats$')
+
+
+def plane_stats(state, ident, payload):
+    from flimkit_qupath_bridge import fitting
+
+    registry = _registry(state)
+    try:
+        meta = registry.metadata(ident)
+    except KeyError:
+        raise RouteError(404, f'no such dataset: {ident}')
+    payload = payload or {}
+    collection = payload.get('rois')
+    if not isinstance(collection, dict) or collection.get('type') != 'FeatureCollection':
+        raise RouteError(400, 'rois must be a GeoJSON FeatureCollection')
+    binning = int(payload.get('binning', 1))
+    asked = payload.get('planes')
+    if not asked:
+        asked = [n for n in registry.plane_names(ident) if n.startswith('tau')]
+    if not asked:
+        raise RouteError(409, 'this dataset has no fitted planes yet; fit per-pixel first')
+    shape = (meta['height'], meta['width'])
+    masks = fitting.masks_from_geojson(collection, shape, binning=binning)
+    found = []
+    for name, mask in masks:
+        region = {'name': name, 'planes': {}}
+        covered = np.asarray(mask, dtype=bool)
+        region['n_pixels'] = int(covered.sum())
+        for plane in asked:
+            array = registry.plane(ident, plane)
+            if array is None:
+                continue
+            array = np.asarray(array, dtype=float)
+            if array.shape != covered.shape:
+                raise RouteError(
+                    409,
+                    f'{plane} is {array.shape} and the mask is {covered.shape}; '
+                    f'fit per-pixel at the binning you are asking stats for')
+            values = array[covered]
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                region['planes'][plane] = None
+                continue
+            region['planes'][plane] = {
+                'mean': float(values.mean()),
+                'median': float(np.median(values)),
+                'std': float(values.std()),
+                'n': int(values.size),
+                'unit': UNITS.get(plane) or registry.plane_unit(ident, plane),
+            }
+        found.append(region)
+    return {'dataset': ident, 'binning': binning, 'regions': found}
+
+
 def _plane_stack(registry, ident, options, binning):
     from flimkit_qupath_bridge.server import encode_image
 

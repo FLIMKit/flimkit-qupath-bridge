@@ -335,6 +335,20 @@ public class BridgeClient {
         return new FetchedImage("maps", file, "");
     }
 
+    public String planeStats(String datasetId, String body)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/planes/stats")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("POST planes/stats returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
     public String fitPixels(String datasetId, String body)
             throws IOException, InterruptedException {
         var response = client.send(
