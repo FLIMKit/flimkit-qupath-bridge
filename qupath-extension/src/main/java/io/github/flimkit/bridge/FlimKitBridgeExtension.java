@@ -603,12 +603,10 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             project.syncChanges();
             saveManifest(manifest);
             qupath.refreshProject();
-            int measured = measureAnnotations(qupath, client, datasetId, binning);
+            String measured = measureAnnotations(qupath, client, datasetId, binning);
             String message = "Added " + entry.getImageName() + "\n\n"
-                    + wanted.size() + " channels: " + String.join(", ", wanted);
-            if (measured > 0)
-                message += "\n\n" + measured + " annotation(s) measured on "
-                        + source;
+                    + wanted.size() + " channels: " + String.join(", ", wanted)
+                    + "\n\n" + measured;
             Dialogs.showInfoNotification(getName(), message);
         } catch (Exception e) {
             logger.error("Could not add the lifetime maps", e);
@@ -617,14 +615,15 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         }
     }
 
-    private int measureAnnotations(QuPathGUI qupath, BridgeClient client,
-                                   String datasetId, int binning) {
+    private String measureAnnotations(QuPathGUI qupath, BridgeClient client,
+                                      String datasetId, int binning) {
         var imageData = qupath.getImageData();
         if (imageData == null)
-            return 0;
+            return "No image open, so nothing was measured.";
         var annotations = new ArrayList<>(imageData.getHierarchy().getAnnotationObjects());
         if (annotations.isEmpty())
-            return 0;
+            return "No annotations to measure. Draw some and run this again to "
+                    + "get a mean lifetime for each.";
         try {
             var body = new JsonObject();
             body.addProperty("binning", binning);
@@ -651,10 +650,16 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             }
             imageData.getHierarchy()
                     .fireObjectMeasurementsChangedEvent(this, annotations);
-            return applied;
+            return applied + " of " + annotations.size()
+                    + " annotation(s) measured against the maps.";
         } catch (Exception e) {
             logger.warn("Could not measure the annotations against the maps", e);
-            return 0;
+            String why = e.getMessage() == null ? "" : e.getMessage();
+            if (why.contains("404"))
+                return "Could not measure the annotations: this bridge has no "
+                        + "planes/stats endpoint, so its Python half is older "
+                        + "than this extension.";
+            return "Could not measure the annotations: " + why;
         }
     }
 
