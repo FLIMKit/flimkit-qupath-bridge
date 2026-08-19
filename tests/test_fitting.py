@@ -265,9 +265,12 @@ def test_the_summed_fit_does_not_spawn_a_process_pool(monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(fitters, 'fit_summed', watched)
-    stack = _synthetic_stack(shape=(4, 4))[0]
+    stack, irf = _synthetic_stack(shape=(4, 4))
     decay = np.asarray(stack).reshape(-1, 256).sum(axis=0).astype(float)
-    fitting.fit_decay(decay, 16, 5e-11, 256, fitting.merge_params({'n_exp': 1}))
+    fitting.fit_decay(
+        decay, 16, 5e-11, 256,
+        fitting.merge_params({'n_exp': 1, 'irf_strategy': 'session'}),
+        irf_prompt=irf)
     assert seen['workers'] == 1
     assert seen['optimizer'] == 'de'
 
