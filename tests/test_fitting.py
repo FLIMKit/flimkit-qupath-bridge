@@ -223,3 +223,21 @@ def test_a_region_of_only_dim_pixels_is_refused():
             params=fitting.merge_params({'n_exp': 1, 'min_photons': 5,
                                          'irf_strategy': 'session'}),
             irf_prompt=irf)
+
+
+def test_tail_is_offered_and_defaults_to_reconv():
+    values = fitting.defaults()['values']
+    assert values['fit_model'] == 'reconv'
+    assert fitting.merge_params({'fit_model': 'tail'})['fit_model'] == 'tail'
+    with pytest.raises(ValueError):
+        fitting.merge_params({'fit_model': 'deconv'})
+
+
+def test_the_stack_limit_is_configurable(monkeypatch):
+    from flimkit_qupath_bridge import datasets
+
+    monkeypatch.setenv('FLIMKIT_BRIDGE_MAX_STACK_BYTES', '9000000000')
+    assert datasets.default_max_stack() == 9000000000
+    assert datasets.DatasetRegistry()._max_stack == 9000000000
+    monkeypatch.setenv('FLIMKIT_BRIDGE_MAX_STACK_BYTES', 'not a number')
+    assert datasets.default_max_stack() == datasets.DEFAULT_MAX_STACK

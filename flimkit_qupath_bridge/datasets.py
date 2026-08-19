@@ -9,13 +9,24 @@ DEFAULT_PLANE_BUDGET = 512 * 1024 * 1024
 DEFAULT_MAX_STACK = 2 * 1024 * 1024 * 1024
 
 
+def default_max_stack():
+    override = os.environ.get('FLIMKIT_BRIDGE_MAX_STACK_BYTES')
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    return DEFAULT_MAX_STACK
+
+
 class StackTooLarge(Exception):
 
     def __init__(self, estimated_bytes, limit_bytes, suggest_binning):
         super().__init__(
             f'decoding this stack needs about {estimated_bytes / 1e9:.2f} GB, '
             f'over the {limit_bytes / 1e9:.2f} GB limit; '
-            f'try binning={suggest_binning}')
+            f'try binning={suggest_binning}, or raise '
+            f'FLIMKIT_BRIDGE_MAX_STACK_BYTES')
         self.estimated_bytes = estimated_bytes
         self.limit_bytes = limit_bytes
         self.suggest_binning = suggest_binning
@@ -140,10 +151,10 @@ class _Entry:
 class DatasetRegistry:
 
     def __init__(self, opener=None, plane_budget_bytes=DEFAULT_PLANE_BUDGET,
-                 max_stack_bytes=DEFAULT_MAX_STACK):
+                 max_stack_bytes=None):
         self._opener = opener or _default_opener
         self._plane_budget = plane_budget_bytes
-        self._max_stack = max_stack_bytes
+        self._max_stack = max_stack_bytes if max_stack_bytes else default_max_stack()
         self._lock = threading.RLock()
         self._by_key = {}
         self._by_id = {}

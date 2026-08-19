@@ -11,10 +11,12 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
+import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -44,11 +46,13 @@ public class FitDialog {
         var grid = new GridPane();
         grid.setHgap(8);
         grid.setVgap(6);
+        var advancedGrid = new GridPane();
+        advancedGrid.setHgap(8);
+        advancedGrid.setVgap(6);
         int row = 0;
+        int advancedRow = 0;
         for (var element : schema) {
             JsonObject entry = element.getAsJsonObject();
-            if (entry.get("advanced").getAsBoolean())
-                continue;
             if (!appliesTo(entry, mode))
                 continue;
             String key = entry.get("key").getAsString();
@@ -56,11 +60,31 @@ public class FitDialog {
             if (control == null)
                 continue;
             controls.put(key, control);
-            grid.add(new Label(entry.get("label").getAsString()), 0, row);
-            grid.add(control, 1, row);
-            row++;
+            var label = new Label(entry.get("label").getAsString());
+            if (entry.get("advanced").getAsBoolean()) {
+                advancedGrid.add(label, 0, advancedRow);
+                advancedGrid.add(control, 1, advancedRow);
+                advancedRow++;
+            }
+            else {
+                grid.add(label, 0, row);
+                grid.add(control, 1, row);
+                row++;
+            }
         }
-        dialog.getDialogPane().setContent(grid);
+        var content = new VBox(8, grid);
+        if (advancedRow > 0) {
+            var toggle = new CheckBox("Show advanced settings");
+            advancedGrid.setVisible(false);
+            advancedGrid.setManaged(false);
+            toggle.selectedProperty().addListener((observed, was, now) -> {
+                advancedGrid.setVisible(now);
+                advancedGrid.setManaged(now);
+                dialog.getDialogPane().getScene().getWindow().sizeToScene();
+            });
+            content.getChildren().addAll(new Separator(), toggle, advancedGrid);
+        }
+        dialog.getDialogPane().setContent(content);
         dialog.getDialogPane().getButtonTypes().addAll(
                 new ButtonType("Fit", ButtonBar.ButtonData.OK_DONE),
                 ButtonType.CANCEL);

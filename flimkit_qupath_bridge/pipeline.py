@@ -213,6 +213,36 @@ def _canvas_from_metadata(output_dir):
     return [int(shape[0]), int(shape[1])] if shape else None
 
 
+def _real_unit_products(output_dir):
+    import numpy as np
+    import tifffile
+
+    output_dir = Path(output_dir)
+    found = sorted(output_dir.glob('*_intensity.npy'))
+    if not found:
+        return []
+    roi_name = found[0].name[:-len('_intensity.npy')]
+    products = []
+    target = output_dir / f'{roi_name}_intensity_photons.tif'
+    if not target.exists():
+        counts = np.load(found[0])
+        whole = (np.isfinite(counts).all() and float(counts.max()) <= 65535
+                 and bool(np.array_equal(counts, np.round(counts))))
+        tifffile.imwrite(str(target),
+                         counts.astype(np.uint16) if whole
+                         else counts.astype(np.float32))
+    products.append({'file': str(target),
+                     'image_id': f'{roi_name}_intensity',
+                     'unit': 'photons'})
+    for name, unit in ((f'{roi_name}_tau_intensity_weighted_fullrange.tif', 'ns'),):
+        candidate = output_dir / name
+        if candidate.exists():
+            products.append({'file': str(candidate),
+                             'image_id': f'{roi_name}_lifetime',
+                             'unit': unit})
+    return products
+
+
 def summarise(result, output_dir):
     output_dir = Path(output_dir)
     result = result or {}
@@ -230,10 +260,16 @@ def summarise(result, output_dir):
             summary[key] = value
     written = (sorted(entry.name for entry in output_dir.iterdir())
                if output_dir.is_dir() else [])
+    try:
+        products = _real_unit_products(output_dir)
+    except Exception as problem:
+        products = []
+        print(f'[QuPath bridge] could not prepare images for QuPath: {problem}')
     return {
         'output_dir': str(output_dir),
         'canvas_shape': shape,
         'maps': sorted(canvas),
         'files': written,
         'global_summary': summary,
+        'products': products,
     }

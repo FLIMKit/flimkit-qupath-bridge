@@ -131,3 +131,35 @@ def test_missing_tiles_name_everywhere_that_was_searched(tmp_path):
     message = str(raised.value)
     assert str(made) in message
     assert str(tmp_path) in message
+
+
+def test_tile_fit_is_the_default_pipeline():
+    assert pipeline.defaults()['values']['pipeline'] == 'tile_fit'
+
+
+def test_products_carry_real_units(tmp_path):
+    import numpy as np
+    import tifffile
+
+    counts = np.array([[0.0, 3.0], [7.0, 12.0]], dtype=np.float32)
+    np.save(str(tmp_path / 'R_2_intensity.npy'), counts)
+    tifffile.imwrite(str(tmp_path / 'R_2_tau_intensity_weighted_fullrange.tif'),
+                     np.array([[1.2, 2.4], [3.6, 4.8]], dtype=np.float32))
+    products = pipeline.summarise(None, tmp_path)['products']
+    by_unit = {entry['unit']: entry for entry in products}
+    assert set(by_unit) == {'photons', 'ns'}
+    written = tifffile.imread(by_unit['photons']['file'])
+    assert written.dtype == np.uint16
+    assert np.array_equal(written.astype(np.float32), counts)
+
+
+def test_products_stay_float_when_counts_are_not_whole(tmp_path):
+    import numpy as np
+    import tifffile
+
+    counts = np.array([[0.0, 3.5]], dtype=np.float32)
+    np.save(str(tmp_path / 'R_2_intensity.npy'), counts)
+    products = pipeline.summarise(None, tmp_path)['products']
+    written = tifffile.imread(products[0]['file'])
+    assert written.dtype == np.float32
+    assert np.array_equal(written, counts)

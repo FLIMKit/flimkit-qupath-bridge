@@ -14,6 +14,9 @@ import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.tools.MenuTools;
 import qupath.lib.io.GsonTools;
 import qupath.lib.objects.PathObject;
+import qupath.lib.objects.PathObjects;
+import qupath.lib.regions.ImagePlane;
+import qupath.lib.roi.ROIs;
 
 import qupath.lib.projects.Project;
 
@@ -205,8 +208,16 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         if (selected.isEmpty())
             selected.addAll(imageData.getHierarchy().getAnnotationObjects());
         if (selected.isEmpty()) {
-            Dialogs.showErrorMessage(getName(), "Draw an annotation first.");
-            return;
+            boolean whole = Dialogs.showConfirmDialog(getName(),
+                    "No annotation is drawn.\n\nFit the whole image instead?");
+            if (!whole)
+                return;
+            var full = ROIs.createRectangleROI(0, 0, server.getWidth(),
+                    server.getHeight(), ImagePlane.getDefaultPlane());
+            var annotation = PathObjects.createAnnotationObject(full);
+            annotation.setName("Whole image");
+            imageData.getHierarchy().addObject(annotation);
+            selected.add(annotation);
         }
         try {
             var client = new BridgeClient(baseUrl, token);
@@ -231,12 +242,48 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                             message += "\n\nNot fitted:\n" + String.join("\n", failures);
                         Dialogs.showInfoNotification(getName(), message);
                     },
-                    problem -> Dialogs.showErrorMessage(getName(),
-                            "Could not fit\n\n" + problem));
+                    problem -> {
+                        int suggested = suggestedBinning(problem);
+                        if (suggested > 0 && Dialogs.showConfirmDialog(getName(),
+                                "This stack is too large to decode whole.\n\n"
+                                        + "Fit it again with binning " + suggested
+                                        + "? That fits " + (suggested * suggested)
+                                        + " pixels as one.")) {
+                            chosen.addProperty("binning", suggested);
+                            body.add("params", chosen);
+                            refit(qupath, client, bridged, imageData, body, selected, chosen);
+                            return;
+                        }
+                        Dialogs.showErrorMessage(getName(), "Could not fit\n\n" + problem);
+                    });
         } catch (Exception e) {
             logger.error("ROI fitting failed", e);
             Dialogs.showErrorMessage(getName(), "Could not fit\n\n" + e.getMessage());
         }
+    }
+
+    private void refit(QuPathGUI qupath, BridgeClient client, FlimKitImageServer bridged,
+                       qupath.lib.images.ImageData<BufferedImage> imageData,
+                       JsonObject body, List<PathObject> selected, JsonObject chosen) {
+        inBackground("Fitting " + selected.size() + " region(s)",
+                () -> client.fitRois(bridged.getDatasetId(), body.toString()),
+                raw -> {
+                    var reply = JsonParser.parseString(raw).getAsJsonObject();
+                    int applied = FitResults.applyToObjects(reply, selected);
+                    imageData.getHierarchy()
+                            .fireObjectMeasurementsChangedEvent(this, selected);
+                    rememberFit(qupath, bridged, chosen, selected, reply);
+                    Dialogs.showInfoNotification(getName(),
+                            "Fitted " + applied + " region(s)");
+                },
+                again -> Dialogs.showErrorMessage(getName(), "Could not fit\n\n" + again));
+    }
+
+    static int suggestedBinning(String problem) {
+        if (problem == null)
+            return 0;
+        var matcher = java.util.regex.Pattern.compile("binning=(\\d+)").matcher(problem);
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
     }
 
     private <T> void inBackground(String title, java.util.concurrent.Callable<T> work,
@@ -393,8 +440,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             int tiles = started.get("n_tiles").getAsInt();
             String outputDir = started.get("output_dir").getAsString();
             new BridgeJob(client, jobId, "FLIMKit: " + tiles + " tiles").watch(
-                    status -> Dialogs.showInfoNotification(getName(),
-                            "Finished. FLIMKit wrote its maps to\n" + outputDir),
+                    status -> importProducts(qupath, client, jobId, outputDir),
                     problem -> {
                         if (problem == null)
                             Dialogs.showInfoNotification(getName(), "Cancelled");
@@ -407,6 +453,58 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             Dialogs.showErrorMessage(getName(),
                     "Could not start stitching\n\n" + e.getMessage());
         }
+    }
+
+    private void importProducts(QuPathGUI qupath, BridgeClient client,
+                                String jobId, String outputDir) {
+        JsonArray products = new JsonArray();
+        try {
+            var result = JsonParser.parseString(client.jobResult(jobId)).getAsJsonObject();
+            if (result.has("products") && result.get("products").isJsonArray())
+                products = result.getAsJsonArray("products");
+        } catch (Exception e) {
+            logger.warn("Could not read the pipeline result", e);
+        }
+        var project = qupath.getProject();
+        if (project == null || products.isEmpty()) {
+            String why = project == null
+                    ? "\n\nOpen a project and they can be added to it automatically."
+                    : "";
+            Dialogs.showInfoNotification(getName(),
+                    "Finished. FLIMKit wrote its maps to\n" + outputDir + why);
+            return;
+        }
+        var manifest = ProjectManifest.open(project);
+        var added = new ArrayList<String>();
+        var skipped = new ArrayList<String>();
+        for (var element : products) {
+            var product = element.getAsJsonObject();
+            String imageId = product.get("image_id").getAsString();
+            String unit = product.get("unit").getAsString();
+            try {
+                Path file = Path.of(product.get("file").getAsString());
+                var entry = ProjectImporter.addToProject(project, file, imageId, unit);
+                added.add(entry.getImageName());
+                if (manifest != null)
+                    manifest.recordImage(imageId, file.toString(), unit, outputDir);
+            } catch (Exception e) {
+                logger.warn("Could not add {}", imageId, e);
+                skipped.add(imageId);
+            }
+        }
+        try {
+            project.syncChanges();
+        } catch (IOException e) {
+            logger.error("Could not save the project", e);
+        }
+        saveManifest(manifest);
+        qupath.refreshProject();
+        String message = added.isEmpty()
+                ? "Finished, but nothing could be added from\n" + outputDir
+                : "Added " + String.join(", ", added);
+        if (!skipped.isEmpty())
+            message += "\nNot added: " + String.join(", ", skipped);
+        Dialogs.showInfoNotification(getName(), message);
     }
 
     private void sendAnnotations(QuPathGUI qupath) {
