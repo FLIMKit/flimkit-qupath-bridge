@@ -24,6 +24,14 @@ That pulls FLIMKit with it. The bridge then starts with FLIMKit, and `flimkit-br
 
 The QuPath half is a jar. Take `qupath-extension-flimkit-bridge-*.jar` from the release and drop it in QuPath's extensions directory, normally `~/QuPath/v0.7/extensions`. It appears under `Extensions > FLIMKit bridge`.
 
+QuPath can manage that jar instead. In `Extensions > Manage extensions`, add this repository as a catalog:
+
+```
+https://github.com/FLIMKit/flimkit-qupath-bridge
+```
+
+The bridge then installs from there, and the manager offers each new release.
+
 ## Why QuPath as well as Fiji
 
 The FLIM workflow that matters here is drawing ROIs on a co-registered brightfield image and sending them back to FLIMKit for analysis. QuPath is built for that on tissue, and its annotation handling and built-in cell detection are stronger than Fiji's ROI Manager.

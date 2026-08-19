@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p release
           cp qupath-extension/build/libs/qupath-extension-flimkit-bridge-*.jar release/
-          rm -f release/*-sources.jar release/*-javadoc.jar
+          rm -f release/*-sources.jar
           cp dist/*.whl dist/*.tar.gz release/
           ls -l release
 
