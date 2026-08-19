@@ -27,7 +27,7 @@ SCHEMA = (
     {'key': 'channel', 'label': 'Channel', 'type': 'int', 'min': 0, 'max': 16,
      'default': None, 'advanced': True},
     {'key': 'pipeline', 'label': 'Pipeline', 'type': 'choice',
-     'choices': ('stitch_fit', 'tile_fit'), 'default': 'stitch_fit'},
+     'choices': ('tile_fit', 'stitch_fit'), 'default': 'tile_fit'},
     {'key': 'mode', 'label': 'Fit', 'type': 'choice',
      'choices': ('summed', 'both'), 'default': 'both'},
 )

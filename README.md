@@ -71,7 +71,7 @@ GET  /v1/pipeline/defaults
 
 The tiles do not have to sit beside the container. The bridge looks in the directory you name, then beside the container, then in the directories next to it, which is where Leica puts them.
 
-`pipeline` chooses between `stitch_fit`, which stitches the canvas and fits it, and `tile_fit`, which fits each tile after a global summed fit and assembles the maps. Both run as jobs, so `GET /v1/jobs/{id}` reports progress and `DELETE` cancels. Cancelling stops the run at the next tile, or at the next stage boundary once fitting is done.
+`pipeline` chooses between `tile_fit`, the default, which fits each tile after a global summed fit and assembles the maps, and `stitch_fit`, which stitches the raw photons into one canvas and fits that. `tile_fit` is the default because `stitch_fit` writes the whole photon cube to disk before it fits anything: a 124 tile mosaic at 512 square is a 5581 square canvas, which is 57 GB at 459 bins. Both run as jobs, so `GET /v1/jobs/{id}` reports progress and `DELETE` cancels. Cancelling stops the run at the next tile, or at the next stage boundary once fitting is done.
 
 Outputs are written to disk, and the output directory can be reopened as a dataset:
 

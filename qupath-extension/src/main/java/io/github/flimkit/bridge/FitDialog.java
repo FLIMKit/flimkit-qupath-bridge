@@ -16,6 +16,8 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.Node;
 
 import javafx.stage.FileChooser;
@@ -130,9 +132,31 @@ public class FitDialog {
 
     private static <T> Spinner<T> typable(Spinner<T> spinner) {
         spinner.setEditable(true);
+        spinner.setFocusTraversable(true);
+        spinner.getEditor().setFocusTraversable(true);
         spinner.focusedProperty().addListener((observed, had, has) -> {
             if (!has)
                 commit(spinner);
+        });
+        spinner.getEditor().focusedProperty().addListener((observed, had, has) -> {
+            if (!has)
+                commit(spinner);
+        });
+        spinner.getEditor().addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                commit(spinner);
+                return;
+            }
+            if (event.getCode() == KeyCode.UP) {
+                commit(spinner);
+                spinner.increment();
+                event.consume();
+            }
+            else if (event.getCode() == KeyCode.DOWN) {
+                commit(spinner);
+                spinner.decrement();
+                event.consume();
+            }
         });
         return spinner;
     }
