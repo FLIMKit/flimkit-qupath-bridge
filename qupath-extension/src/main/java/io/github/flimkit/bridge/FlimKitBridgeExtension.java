@@ -605,10 +605,9 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             saveManifest(manifest);
             qupath.refreshProject();
             String measured = measureAnnotations(qupath, client, datasetId, binning);
-            String reopened = reopenForChannels(qupath, bridged);
             String message = "Added " + entry.getImageName() + "\n\n"
                     + wanted.size() + " channels: " + String.join(", ", wanted)
-                    + "\n\n" + measured + "\n\n" + reopened;
+                    + "\n\n" + measured;
             Dialogs.showInfoNotification(getName(), message);
         } catch (Exception e) {
             logger.error("Could not add the lifetime maps", e);
@@ -617,24 +616,6 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
         }
     }
 
-    private String reopenForChannels(QuPathGUI qupath, FlimKitImageServer bridged) {
-        var viewer = qupath.getViewer();
-        var imageData = qupath.getImageData();
-        if (viewer == null || imageData == null || imageData.getServer() != bridged)
-            return "The FLIM image was not reopened, so it still has one channel.";
-        String path = bridged.getSourcePath();
-        try {
-            boolean opened = qupath.openImage(viewer, path, false, false);
-            if (!opened)
-                return "Could not reopen " + path + ", so the lifetime channels "
-                        + "are only on the maps image.";
-            return "Reopened the FLIM image, which now carries a channel per "
-                    + "fitted map as well.";
-        } catch (Exception e) {
-            logger.warn("Could not reopen the FLIM image", e);
-            return "Could not reopen the FLIM image: " + e.getMessage();
-        }
-    }
 
     private String measureAnnotations(QuPathGUI qupath, BridgeClient client,
                                       String datasetId, int binning) {
