@@ -1,26 +1,38 @@
 {
     "name": "FLIMKit catalog",
     "description": "QuPath extensions for working with FLIMKit",
-    "extensions": [{
-        "name": "FLIMKit bridge",
-        "description": "Direct image and ROI exchange between FLIMKit and QuPath, with stitching, fitting and phasor analysis run in FLIMKit from a QuPath session",
-        "author": "Alex Hunt",
-        "homepage": "https://github.com/FLIMKit/flimkit-qupath-bridge",
-        "releases": [
-            {
-                "name": "v0.2.0",
-                "main_url": "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.2.0/qupath-extension-flimkit-bridge-0.2.0.jar",
-                "version_range": {
-                    "min": "v0.7.0"
+    "extensions": [
+        {
+            "name": "FLIMKit bridge",
+            "description": "Direct image and ROI exchange between FLIMKit and QuPath, with stitching, fitting and phasor analysis run in FLIMKit from a QuPath session",
+            "author": "Alex Hunt",
+            "homepage": "https://github.com/FLIMKit/flimkit-qupath-bridge",
+            "releases": [
+                {
+                    "name": "v0.2.0",
+                    "main_url": "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.2.0/qupath-extension-flimkit-bridge-0.2.0.jar",
+                    "javadoc_urls": [
+                        "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.2.0/qupath-extension-flimkit-bridge-0.2.0-javadoc.jar"
+                    ],
+                    "version_range": {
+                        "min": "v0.7.0"
+                    }
+                },
+                {
+                    "name": "v0.1.1",
+                    "main_url": "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.1.1/qupath-extension-flimkit-bridge-0.1.1.jar",
+                    "version_range": {
+                        "min": "v0.7.0"
+                    }
+                },
+                {
+                    "name": "v0.1.0",
+                    "main_url": "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.1.0/qupath-extension-flimkit-bridge-0.1.0.jar",
+                    "version_range": {
+                        "min": "v0.7.0"
+                    }
                 }
-            },
-            {
-                "name": "v0.1.1",
-                "main_url": "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.1.1/qupath-extension-flimkit-bridge-0.1.1.jar",
-                "version_range": {
-                    "min": "v0.7.0"
-                }
-            }
-        ]
-    }]
+            ]
+        }
+    ]
 }
