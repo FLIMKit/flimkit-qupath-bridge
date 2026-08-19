@@ -85,12 +85,12 @@ public class FitDialog {
             case "int" -> {
                 int min = entry.has("min") ? entry.get("min").getAsInt() : 0;
                 int max = entry.has("max") ? entry.get("max").getAsInt() : 1000;
-                return new Spinner<Integer>(min, max, values.get(key).getAsInt());
+                return typable(new Spinner<Integer>(min, max, values.get(key).getAsInt()));
             }
             case "float" -> {
                 double min = entry.has("min") ? entry.get("min").getAsDouble() : 0;
                 double max = entry.has("max") ? entry.get("max").getAsDouble() : 1000;
-                return new Spinner<Double>(min, max, values.get(key).getAsDouble(), 0.1);
+                return typable(new Spinner<Double>(min, max, values.get(key).getAsDouble(), 0.1));
             }
             case "bool" -> {
                 var box = new CheckBox();
@@ -128,6 +128,28 @@ public class FitDialog {
         }
     }
 
+    private static <T> Spinner<T> typable(Spinner<T> spinner) {
+        spinner.setEditable(true);
+        spinner.focusedProperty().addListener((observed, had, has) -> {
+            if (!has)
+                commit(spinner);
+        });
+        return spinner;
+    }
+
+    private static <T> void commit(Spinner<T> spinner) {
+        var factory = spinner.getValueFactory();
+        if (factory == null || factory.getConverter() == null)
+            return;
+        var converter = factory.getConverter();
+        String typed = spinner.getEditor().getText();
+        try {
+            factory.setValue(converter.fromString(typed));
+        } catch (RuntimeException ignored) {
+            spinner.getEditor().setText(converter.toString(factory.getValue()));
+        }
+    }
+
     JsonObject collect() {
         var chosen = new JsonObject();
         for (var pair : controls.entrySet()) {
@@ -137,8 +159,10 @@ public class FitDialog {
                 if (!typed.isBlank())
                     chosen.addProperty(pair.getKey(), typed);
             }
-            else if (control instanceof Spinner<?> spinner)
+            else if (control instanceof Spinner<?> spinner) {
+                commit(spinner);
                 chosen.addProperty(pair.getKey(), (Number) spinner.getValue());
+            }
             else if (control instanceof CheckBox box)
                 chosen.addProperty(pair.getKey(), box.isSelected());
             else if (control instanceof ChoiceBox<?> box)
