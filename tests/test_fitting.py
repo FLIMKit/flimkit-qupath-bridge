@@ -252,3 +252,26 @@ def test_the_cap_scales_with_the_machine(monkeypatch):
     ram = psutil.virtual_memory().total
     assert datasets.default_max_stack() == max(datasets.DEFAULT_MAX_STACK,
                                                int(ram * 0.25))
+
+
+def test_the_summed_fit_does_not_spawn_a_process_pool(monkeypatch):
+    from flimkit.FLIM import fitters
+
+    seen = {}
+    real = fitters.fit_summed
+
+    def watched(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fitters, 'fit_summed', watched)
+    stack = _synthetic_stack(shape=(4, 4))[0]
+    decay = np.asarray(stack).reshape(-1, 256).sum(axis=0).astype(float)
+    fitting.fit_decay(decay, 16, 5e-11, 256, fitting.merge_params({'n_exp': 1}))
+    assert seen['workers'] == 1
+    assert seen['optimizer'] == 'de'
+
+
+def test_per_pixel_uses_the_gpu_unless_it_is_turned_off():
+    assert fitting.defaults()['values']['use_gpu'] is True
+    assert fitting.merge_params({'use_gpu': False})['use_gpu'] is False

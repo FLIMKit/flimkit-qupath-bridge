@@ -33,6 +33,11 @@ SCHEMA = (
     {'key': 'cost_function', 'label': 'Cost function', 'type': 'choice',
      'choices': ('poisson', 'chi2'), 'applies_to': ('roi', 'per_pixel'),
      'advanced': True, 'default': 'poisson'},
+    {'key': 'optimizer', 'label': 'Optimizer', 'type': 'choice',
+     'choices': ('de', 'lm_multistart'), 'applies_to': ('roi', 'per_pixel'),
+     'advanced': True, 'default': 'de'},
+    {'key': 'use_gpu', 'label': 'Use the GPU for per-pixel', 'type': 'bool',
+     'applies_to': ('per_pixel',), 'advanced': False, 'default': True},
     {'key': 'fit_bg', 'label': 'Fit background', 'type': 'bool',
      'applies_to': ('roi', 'per_pixel'), 'advanced': True, 'default': True},
     {'key': 'fit_sigma', 'label': 'Fit IRF broadening', 'type': 'bool',
@@ -181,6 +186,8 @@ def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
             float(params['tau_min_ns']),
             float(params['tau_max_ns']),
             cost_function=params['cost_function'],
+            optimizer=params['optimizer'],
+            workers=1,
         )
     else:
         irf, irf_source = build_irf(n_bins, tcspc_res, decay, cached=irf_prompt,
@@ -192,6 +199,8 @@ def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
             float(params['tau_min_ns']),
             float(params['tau_max_ns']),
             cost_function=params['cost_function'],
+            optimizer=params['optimizer'],
+            workers=1,
         )
     taus = [float(t) for t in summary['taus_ns']]
     amps = [float(a) for a in summary['amps']]
@@ -222,7 +231,8 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
     call reports nothing and cannot be interrupted. Banding gives a progress
     tick and a cancellation point per band on every backend, and caps peak
     memory. global_popt is fitted once over the whole field so the bands stay
-    independent of each other.
+    independent of each other. Each band still goes to the GPU when there is
+    one, unless use_gpu is off.
     """
     from flimkit.FLIM.fitters import fit_per_pixel, fit_summed, fit_summed_tail
     stack = np.asarray(stack)
@@ -240,6 +250,8 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             float(params['tau_min_ns']),
             float(params['tau_max_ns']),
             cost_function=params['cost_function'],
+            optimizer=params['optimizer'],
+            workers=1,
         )
     else:
         irf, irf_source = build_irf(n_bins, tcspc_res, summed, cached=irf_prompt,
@@ -251,6 +263,8 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             float(params['tau_min_ns']),
             float(params['tau_max_ns']),
             cost_function=params['cost_function'],
+            optimizer=params['optimizer'],
+            workers=1,
         )
     edges = np.linspace(0, height, bands + 1).astype(int)
     collected = []
@@ -268,7 +282,7 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             tau_min_ns=float(params['tau_min_ns']),
             tau_max_ns=float(params['tau_max_ns']),
             fit_idx=summary.get('fit_idx'),
-            use_gpu=False,
+            use_gpu='auto' if params.get('use_gpu', True) else False,
             fit_model=fit_model,
         )
         collected.append(maps)

@@ -71,6 +71,10 @@ GET  /v1/pipeline/defaults
 
 The tiles do not have to sit beside the container. The bridge looks in the directory you name, then beside the container, then in the directories next to it, which is where Leica puts them.
 
+Summed fits run with `workers=1`. `fit_summed` defaults to `workers=-1`, which starts a process pool inside the server for every fit, and on a spawn platform each worker re-imports FLIMKit. It measured slower than a single worker even on a 10 core machine, 1.74s against 1.15s.
+
+Per-pixel fits use the GPU. They were pinned to the CPU so the row banding could report progress, which cost the 4x the GPU gives on a full field. Each band goes to the GPU now, and `use_gpu` turns that off.
+
 When a pipeline job finishes and a QuPath project is open, the maps go into it. The bridge writes a real-unit intensity image beside the run (uint16 when the photon counts fit, float32 otherwise) and points QuPath at that and at the full-range lifetime TIFF, so both carry photons and nanoseconds rather than a display scaling.
 
 The cap on decoding a stack whole is a quarter of the machine's memory, with a 2 GiB floor, so a 1024 square field at 529 bins (2.22 GB) goes through on anything with more than 8 GB and an 8 GB laptop behaves as it did. `FLIMKIT_BRIDGE_MAX_STACK_BYTES` overrides it either way. When a stack is still over the cap, QuPath reads the suggested binning out of the refusal and offers to fit again at it.
