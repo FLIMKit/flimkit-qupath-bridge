@@ -534,7 +534,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                     .getAsJsonObject();
             String jobId = started.get("job").getAsString();
             new BridgeJob(client, jobId, "FLIMKit: per-pixel fit").watch(
-                    status -> importPlanes(qupath, client, bridged.getDatasetId(), jobId),
+                    status -> importPlanes(qupath, client, bridged, jobId),
                     problem -> {
                         if (problem == null)
                             Dialogs.showInfoNotification(getName(), "Cancelled");
@@ -550,10 +550,12 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
     }
 
     private void importPlanes(QuPathGUI qupath, BridgeClient client,
-                              String datasetId, String jobId) {
+                              FlimKitImageServer bridged, String jobId) {
         var project = qupath.getProject();
         if (project == null)
             return;
+        String datasetId = bridged.getDatasetId();
+        String source = bridged.getMetadata().getName();
         var wanted = new ArrayList<String>();
         try {
             var result = resultOf(client.jobResult(jobId));
@@ -573,38 +575,30 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             return;
         }
         var manifest = ProjectManifest.open(project);
-        var added = new ArrayList<String>();
-        var skipped = new ArrayList<String>();
-        for (String plane : wanted) {
-            try {
-                var fetched = client.fetchPlane(datasetId, plane);
-                Path stored = ProjectImporter.storeBesideProject(
-                        project, datasetId + "_" + plane, fetched.file());
-                var entry = ProjectImporter.addToProject(
-                        project, stored, datasetId + "_" + plane, fetched.valueUnit());
-                added.add(entry.getImageName());
-                if (manifest != null)
-                    manifest.recordImage(datasetId + "_" + plane,
-                            stored.getFileName().toString(), fetched.valueUnit(),
-                            datasetId);
-            } catch (Exception e) {
-                logger.warn("Could not add plane {}", plane, e);
-                skipped.add(plane);
-            }
-        }
+        String stem = source.contains(".")
+                ? source.substring(0, source.lastIndexOf('.'))
+                : source;
+        String name = stem + " lifetime maps";
         try {
+            var fetched = client.fetchPlaneStack(datasetId, String.join(",", wanted));
+            Path stored = ProjectImporter.storeBesideProject(
+                    project, stem + "_lifetime_maps", fetched.file(), ".ome.tif");
+            var entry = ProjectImporter.addNamed(project, stored, name);
+            if (manifest != null)
+                manifest.recordImage(stem + "_lifetime_maps",
+                        stored.getFileName().toString(),
+                        String.join(", ", wanted), source);
             project.syncChanges();
-        } catch (IOException e) {
-            logger.error("Could not save the project", e);
+            saveManifest(manifest);
+            qupath.refreshProject();
+            Dialogs.showInfoNotification(getName(),
+                    "Added " + entry.getImageName() + "\n\n"
+                            + wanted.size() + " channels: " + String.join(", ", wanted));
+        } catch (Exception e) {
+            logger.error("Could not add the lifetime maps", e);
+            Dialogs.showErrorMessage(getName(),
+                    "Fitted, but the maps could not be added\n\n" + e.getMessage());
         }
-        saveManifest(manifest);
-        qupath.refreshProject();
-        String message = added.isEmpty()
-                ? "Fitted, but none of the maps could be added"
-                : "Added " + String.join(", ", added);
-        if (!skipped.isEmpty())
-            message += "\nNot added: " + String.join(", ", skipped);
-        Dialogs.showInfoNotification(getName(), message);
     }
 
     static JsonObject resultOf(String reply) {

@@ -222,3 +222,53 @@ def test_binned_intensity_plane(served):
 
     assert array.shape == (4, 4)
     assert headers['X-FLIMKit-Plane-Binning'] == '2'
+
+
+def test_a_plane_stack_comes_back_as_one_named_multichannel_image(tmp_path):
+    import io
+    import re
+
+    import numpy as np
+    import tifffile
+
+    from flimkit_qupath_bridge import dataset_routes
+
+    class _Registry:
+        def metadata(self, ident):
+            return {'height': 4, 'width': 4}
+
+        def intensity(self, ident, binning=1):
+            return np.full((4, 4), 7.0, dtype=np.float32)
+
+        def plane(self, ident, name):
+            return np.full((4, 4), 2.5, dtype=np.float32) if name == 'tau_1' else None
+
+        def plane_unit(self, ident, name):
+            return 'ns'
+
+    state = type('S', (), {'datasets': _Registry()})()
+    body, unit, binning, shape = dataset_routes.plane_tiff(
+        state, 'ds_1', 'stack', 'planes=intensity,tau_1')
+    assert shape == (2, 4, 4)
+    with tifffile.TiffFile(io.BytesIO(body)) as handle:
+        assert handle.series[0].dtype == np.float32
+        names = re.findall(r'Channel[^>]*Name="([^"]+)"', handle.ome_metadata)
+        stacked = handle.asarray()
+    assert names == ['intensity (photons)', 'tau_1 (ns)']
+    assert stacked[0].max() == 7.0 and stacked[1].max() == 2.5
+    assert unit == 'intensity (photons),tau_1 (ns)'
+
+
+def test_a_plane_stack_needs_planes_named():
+    import numpy as np
+
+    from flimkit_qupath_bridge import dataset_routes
+
+    class _Registry:
+        def metadata(self, ident):
+            return {'height': 4, 'width': 4}
+
+    state = type('S', (), {'datasets': _Registry()})()
+    with pytest.raises(dataset_routes.RouteError) as caught:
+        dataset_routes.plane_tiff(state, 'ds_1', 'stack', '')
+    assert caught.value.status == 400

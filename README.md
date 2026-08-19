@@ -71,7 +71,7 @@ GET  /v1/pipeline/defaults
 
 The tiles do not have to sit beside the container. The bridge looks in the directory you name, then beside the container, then in the directories next to it, which is where Leica puts them.
 
-`Fit per-pixel lifetimes...` runs the per-pixel fit on the open FLIM image and adds the maps to the project when it finishes: the intensity in photons, and `tau_mean_amp`, `tau_mean_int` and a `tau_N` per component, all float32 in nanoseconds. They are the values, not a colour render, so QuPath's own display settings do the colouring and a measurement reads back in ns.
+`Fit per-pixel lifetimes...` runs the per-pixel fit on the open FLIM image and adds the maps to the project when it finishes, as one image named after the source with a channel each: the intensity in photons, and `tau_mean_amp`, `tau_mean_int` and a `tau_N` per component in nanoseconds. `GET /v1/datasets/{id}/planes/stack.tif?planes=a,b,c` builds it, a float32 OME-TIFF carrying the channel names. They are the values, not a colour render, so QuPath's own display settings do the colouring and a measurement reads back in ns.
 
 `GET /v1/status` reports `bridge_version` and `flimkit_version` alongside the protocol version, and QuPath warns when the extension and the bridge are not the same version. It also re-reads the discovery file before every call, because each bridge start mints a new token, so a restarted bridge used to turn every request into a bare 401 until you hit Connect again. A manually entered address is left alone.
 

@@ -2,6 +2,7 @@ package io.github.flimkit.bridge;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -318,6 +319,20 @@ public class BridgeClient {
         Path file = Files.createTempFile("flimkit-" + plane + "-", ".tif");
         Files.write(file, response.body());
         return new FetchedImage(plane, file, unit);
+    }
+
+    public FetchedImage fetchPlaneStack(String datasetId, String planes)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/planes/stack.tif?planes="
+                        + URLEncoder.encode(planes, StandardCharsets.UTF_8))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() != 200)
+            throw new IOException("GET plane stack returned " + response.statusCode());
+        Path file = Files.createTempFile("flimkit-maps-", ".ome.tif");
+        Files.write(file, response.body());
+        return new FetchedImage("maps", file, "");
     }
 
     public String fitPixels(String datasetId, String body)
