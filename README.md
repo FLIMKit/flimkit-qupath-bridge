@@ -12,6 +12,18 @@ The endpoint shapes come from [flimkit-fiji-bridge](https://github.com/FLIMKit/f
 
 The bigger difference is on the other side. This one ships a QuPath extension that runs inside a live session, so it works with the image you have open and the annotations you have drawn, and it can add the FLIMKit images to the open project. The Fiji bridge drives Fiji through a Groovy script.
 
+## Installing
+
+The Python half goes into the environment FLIMKit runs in:
+
+```bash
+pip install flimkit-qupath-bridge
+```
+
+That pulls FLIMKit with it. The bridge then starts with FLIMKit, and `flimkit-bridge` is on the path for the headless server.
+
+The QuPath half is a jar. Take `qupath-extension-flimkit-bridge-*.jar` from the release and drop it in QuPath's extensions directory, normally `~/QuPath/v0.7/extensions`. It appears under `Extensions > FLIMKit bridge`.
+
 ## Why QuPath as well as Fiji
 
 The FLIM workflow that matters here is drawing ROIs on a co-registered brightfield image and sending them back to FLIMKit for analysis. QuPath is built for that on tissue, and its annotation handling and built-in cell detection are stronger than Fiji's ROI Manager.
@@ -77,7 +89,7 @@ GPL-3.0. See [LICENSING.md](LICENSING.md).
 ## Requirements
 
 - QuPath 0.7.0 or newer.
-- FLIMKit with the plugin bindings, which means a build after PR #52.
+- FLIMKit 0.12.0 or newer, which pip pulls in.
 - Python 3.12 or newer.
 - The [QuPath alignment extension](https://github.com/qupath/qupath-extension-align), for co-registration.
 
