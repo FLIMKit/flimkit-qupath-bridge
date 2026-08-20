@@ -370,7 +370,7 @@ def phasor_summary(state, ident):
         'width': int(found['real'].shape[1]),
         'height': int(found['real'].shape[0]),
         'binning': found['binning'],
-        'frequency_hz': found['frequency'],
+        'frequency_mhz': found['frequency'],
         'channel': found['channel'],
         'calibrated': found['calibrated'],
     }
@@ -404,10 +404,8 @@ def phasor_mask(state, ident, payload):
             found['real'], found['imag'], found['mean'], cursors, min_photons)
     except ValueError as exc:
         raise RouteError(400, str(exc))
-    counts = [
-        {'id': identifier, 'n_pixels': int(mask.sum())}
-        for identifier, mask in masks.items()
-    ]
+    counts = phasor_module.cursor_stats(
+        found['real'], found['imag'], found['mean'], masks, found['frequency'])
     if payload.get('output') == 'labels':
         labels = phasor_module.label_image(
             found['real'], found['imag'], found['mean'], cursors, min_photons)
