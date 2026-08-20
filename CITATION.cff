@@ -6,15 +6,19 @@ authors:
     given-names: Alexander
     affiliation: "Centre for Inflammation Research, Institute for Regeneration and Repair, University of Edinburgh, Edinburgh, UK"
     orcid: "https://orcid.org/0009-0006-2990-649X"
+  - family-names: Akram
+    given-names: Ahsan
+    affiliation: "University of Edinburgh"
+    orcid: "https://orcid.org/0000-0003-4605-1682"
 type: software
 license: GPL-3.0-or-later
-version: 0.2.0
+version: 0.4.0
 date-released: 2026-08-19
 doi: 10.5281/zenodo.21954999
 identifiers:
   - type: doi
-    value: 10.5281/zenodo.21977640
-    description: "Archived release v0.1.1"
+    value: 10.5281/zenodo.22017412
+    description: "Archived release v0.3.0"
 repository-code: "https://github.com/FLIMKit/flimkit-qupath-bridge"
 keywords:
   - FLIM
