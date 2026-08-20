@@ -210,6 +210,29 @@ def _window(params):
     return start, end
 
 
+def accepts(func, name):
+    from inspect import signature
+    try:
+        return name in signature(func).parameters
+    except (TypeError, ValueError):
+        return True
+
+
+def _pileup_kwargs(params, func, n_sync):
+    wanted = bool(params.get('pileup_in_model'))
+    if wanted and not accepts(func, 'pileup_in_model'):
+        from flimkit_qupath_bridge.version import flimkit_version
+        raise ValueError(
+            f'pile-up in the model needs a FLIMKit that offers it; this one is '
+            f'{flimkit_version()}, which has only the Coates route. Upgrade '
+            f'FLIMKit or untick the setting.')
+    found = {'correct_pileup': bool(params.get('correct_pileup', False)),
+             'n_sync': n_sync}
+    if accepts(func, 'pileup_in_model'):
+        found['pileup_in_model'] = wanted
+    return found
+
+
 def _tuning(params):
     return dict(optimizer=params['optimizer'],
                 n_restarts=int(params.get('lm_restarts', 8)),
@@ -290,6 +313,7 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
     fit_model = params.get('fit_model', 'reconv')
     start_ns, end_ns = _window(params)
     sync = n_sync if params.get('pileup_in_model') else None
+    pileup = _pileup_kwargs(params, fit_per_pixel, n_sync)
     if fit_model == 'tail':
         irf = None
         irf_source = 'none, the tail fit ignores the instrument response'
@@ -337,9 +361,7 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             use_gpu='auto' if params.get('use_gpu', True) else False,
             fit_model=fit_model,
             free_tau=bool(params.get('free_tau', False)),
-            correct_pileup=bool(params.get('correct_pileup', False)),
-            pileup_in_model=bool(params.get('pileup_in_model', False)),
-            n_sync=n_sync,
+            **pileup,
         )
         collected.append(maps)
         print(f'    band {index + 1} of {bands}')
