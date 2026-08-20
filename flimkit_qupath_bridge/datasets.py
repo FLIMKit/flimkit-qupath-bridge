@@ -62,7 +62,12 @@ class _FlimFileReader:
             'time_range_ns': float(self._file.n_bins) * float(self._file.tcspc_res) * 1e9,
             'sync_rate_mhz': self._sync_rate_mhz(),
             'period_ns': self._period_ns(),
+            'n_sync': self._n_sync(),
         }
+
+    def _n_sync(self):
+        count = getattr(self._file, 'n_sync', 0) or 0
+        return int(count) if count else None
 
     def _sync_rate_mhz(self):
         rate = getattr(self._file, 'sync_rate', 0) or 0
@@ -265,6 +270,7 @@ class DatasetRegistry:
             'time_range_ns': meta.get('time_range_ns'),
             'sync_rate_mhz': meta.get('sync_rate_mhz'),
             'period_ns': meta.get('period_ns'),
+            'n_sync': meta.get('n_sync'),
             'estimated_stack_bytes': estimates,
             'planes': self.plane_names(ident),
             'n_tiles': meta.get('n_tiles'),

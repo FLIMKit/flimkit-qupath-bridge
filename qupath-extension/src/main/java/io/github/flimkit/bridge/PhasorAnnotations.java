@@ -1,5 +1,7 @@
 package io.github.flimkit.bridge;
 
+import com.google.gson.JsonObject;
+
 import qupath.lib.analysis.images.ContourTracing;
 import qupath.lib.analysis.images.SimpleImages;
 import qupath.lib.objects.PathObject;
@@ -15,6 +17,28 @@ import java.util.List;
 public class PhasorAnnotations {
 
     private PhasorAnnotations() {}
+
+    public static final String PREFIX = "Phasor: ";
+
+    public static void applyStats(JsonObject entry, PathObject annotation) {
+        var list = annotation.getMeasurementList();
+        put(list, entry, "tau_phi_ns", PREFIX + "tau phi (ns)");
+        put(list, entry, "tau_mod_ns", PREFIX + "tau mod (ns)");
+        put(list, entry, "tau_phi_min_ns", PREFIX + "tau phi min (ns)");
+        put(list, entry, "tau_phi_max_ns", PREFIX + "tau phi max (ns)");
+        put(list, entry, "mean_g", PREFIX + "G");
+        put(list, entry, "mean_s", PREFIX + "S");
+        put(list, entry, "photons", PREFIX + "photons");
+        put(list, entry, "n_pixels", PREFIX + "pixels");
+        list.close();
+    }
+
+    private static void put(qupath.lib.measurements.MeasurementList list,
+                            JsonObject entry, String key, String label) {
+        if (entry == null || !entry.has(key) || entry.get(key).isJsonNull())
+            return;
+        list.put(label, entry.get(key).getAsDouble());
+    }
 
     /**
      * Turns a phasor label image into QuPath annotations.

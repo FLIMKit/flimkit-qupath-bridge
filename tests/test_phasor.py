@@ -137,6 +137,50 @@ def test_an_unknown_cursor_type_is_refused(two_populations):
                             min_photons=1.0)
 
 
+
+def _single_exponential(tau_ns, frequency_mhz, side=4):
+    omega = 2.0 * np.pi * frequency_mhz * 1e6
+    product = omega * tau_ns * 1e-9
+    g = 1.0 / (1.0 + product ** 2)
+    s = product / (1.0 + product ** 2)
+    return (np.full((side, side), g), np.full((side, side), s),
+            np.full((side, side), 500.0))
+
+
+@pytest.mark.parametrize('tau_ns', [0.5, 2.4, 4.1])
+def test_cursor_stats_recover_a_known_lifetime(tau_ns):
+    real, imag, mean = _single_exponential(tau_ns, 40.0)
+    masks = {'c1': np.ones(real.shape, dtype=bool)}
+    found = phasor.cursor_stats(real, imag, mean, masks, 40.0)[0]
+    assert found['tau_phi_ns'] == pytest.approx(tau_ns, abs=1e-6)
+    assert found['tau_mod_ns'] == pytest.approx(tau_ns, abs=1e-6)
+    assert found['n_pixels'] == real.size
+    assert found['photons'] == pytest.approx(500.0 * real.size)
+
+
+def test_cursor_stats_report_the_phasor_coordinates():
+    real, imag, mean = _single_exponential(2.4, 40.0)
+    masks = {'c1': np.ones(real.shape, dtype=bool)}
+    found = phasor.cursor_stats(real, imag, mean, masks, 40.0)[0]
+    assert found['mean_g'] == pytest.approx(float(real[0, 0]))
+    assert found['mean_s'] == pytest.approx(float(imag[0, 0]))
+
+
+def test_an_empty_cursor_reports_pixels_and_no_lifetime():
+    real, imag, mean = _single_exponential(2.4, 40.0)
+    masks = {'c1': np.zeros(real.shape, dtype=bool)}
+    found = phasor.cursor_stats(real, imag, mean, masks, 40.0)[0]
+    assert found['n_pixels'] == 0
+    assert 'tau_phi_ns' not in found
+
+
+def test_cursor_stats_without_a_frequency_report_no_lifetime():
+    real, imag, mean = _single_exponential(2.4, 40.0)
+    masks = {'c1': np.ones(real.shape, dtype=bool)}
+    found = phasor.cursor_stats(real, imag, mean, masks, None)[0]
+    assert found['n_pixels'] == real.size
+    assert 'tau_phi_ns' not in found
+
 import os
 from pathlib import Path
 

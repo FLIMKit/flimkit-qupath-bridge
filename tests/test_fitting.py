@@ -278,3 +278,47 @@ def test_the_summed_fit_does_not_spawn_a_process_pool(monkeypatch):
 def test_per_pixel_uses_the_gpu_unless_it_is_turned_off():
     assert fitting.defaults()['values']['use_gpu'] is True
     assert fitting.merge_params({'use_gpu': False})['use_gpu'] is False
+
+
+def test_accepts_reports_a_missing_keyword():
+    from flimkit_qupath_bridge.fitting import accepts
+
+    def older(stack, correct_pileup=False, n_sync=None):
+        return None
+
+    def newer(stack, correct_pileup=False, n_sync=None, pileup_in_model=False):
+        return None
+
+    assert not accepts(older, 'pileup_in_model')
+    assert accepts(newer, 'pileup_in_model')
+
+
+def test_pileup_in_the_model_is_refused_on_a_flimkit_without_it():
+    from flimkit_qupath_bridge.fitting import _pileup_kwargs
+
+    def older(stack, correct_pileup=False, n_sync=None):
+        return None
+
+    with pytest.raises(ValueError, match='needs a FLIMKit that offers it'):
+        _pileup_kwargs({'pileup_in_model': True}, older, 1000)
+
+
+def test_coates_still_reaches_a_flimkit_without_the_model_route():
+    from flimkit_qupath_bridge.fitting import _pileup_kwargs
+
+    def older(stack, correct_pileup=False, n_sync=None):
+        return None
+
+    found = _pileup_kwargs({'correct_pileup': True}, older, 1000)
+    assert found == {'correct_pileup': True, 'n_sync': 1000}
+
+
+def test_the_model_route_passes_through_when_flimkit_has_it():
+    from flimkit_qupath_bridge.fitting import _pileup_kwargs
+
+    def newer(stack, correct_pileup=False, n_sync=None, pileup_in_model=False):
+        return None
+
+    found = _pileup_kwargs({'pileup_in_model': True}, newer, 1000)
+    assert found['pileup_in_model'] is True
+    assert found['n_sync'] == 1000

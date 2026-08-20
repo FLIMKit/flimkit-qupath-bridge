@@ -299,7 +299,7 @@ def fit_rois(state, ident, payload):
         try:
             found = fitting.fit_masked_decay(
                 stack, mask, meta['tcspc_res'], meta['n_bins'], params,
-                irf_prompt=irf)
+                irf_prompt=irf, n_sync=meta.get('n_sync'))
         except ValueError as exc:
             results.append({'name': name, 'error': str(exc)})
             continue
@@ -370,7 +370,7 @@ def phasor_summary(state, ident):
         'width': int(found['real'].shape[1]),
         'height': int(found['real'].shape[0]),
         'binning': found['binning'],
-        'frequency_hz': found['frequency'],
+        'frequency_mhz': found['frequency'],
         'channel': found['channel'],
         'calibrated': found['calibrated'],
     }
@@ -404,10 +404,8 @@ def phasor_mask(state, ident, payload):
             found['real'], found['imag'], found['mean'], cursors, min_photons)
     except ValueError as exc:
         raise RouteError(400, str(exc))
-    counts = [
-        {'id': identifier, 'n_pixels': int(mask.sum())}
-        for identifier, mask in masks.items()
-    ]
+    counts = phasor_module.cursor_stats(
+        found['real'], found['imag'], found['mean'], masks, found['frequency'])
     if payload.get('output') == 'labels':
         labels = phasor_module.label_image(
             found['real'], found['imag'], found['mean'], cursors, min_photons)
@@ -505,7 +503,8 @@ def fit_pixels(state, ident, payload):
         stack = registry.stack(ident, binning=binning)
         found = fitting.fit_pixels(
             stack, meta['tcspc_res'], meta['n_bins'], params,
-            irf_prompt=irf_prompt, bands=8, progress=progress, cancel=cancel)
+            irf_prompt=irf_prompt, bands=8, progress=progress, cancel=cancel,
+            n_sync=meta.get('n_sync'))
         if found is None:
             return None
         for name, array in found['maps'].items():

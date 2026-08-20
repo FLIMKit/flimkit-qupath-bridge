@@ -79,7 +79,7 @@ public class PhasorWindow {
         var side = new VBox(6);
         side.setPadding(new Insets(8));
         side.getChildren().add(new Label(String.format(
-                "%.2f MHz, binning %d", summary.get("frequency_hz").getAsDouble(),
+                "%.2f MHz, binning %d", summary.get("frequency_mhz").getAsDouble(),
                 binning)));
         side.getChildren().add(cursorList);
 
@@ -225,12 +225,34 @@ public class PhasorWindow {
                     client.phasorMask(datasetId, requestBody(false))).getAsJsonObject();
             for (var element : reply.getAsJsonArray("cursors")) {
                 var entry = element.getAsJsonObject();
-                cursorList.getItems().add(entry.get("id").getAsString() + ": "
-                        + entry.get("n_pixels").getAsInt() + " px");
+                cursorList.getItems().add(describe(entry));
             }
         } catch (Exception e) {
             logger.warn("Could not count phasor pixels", e);
         }
+    }
+
+    static String describe(JsonObject entry) {
+        int pixels = entry.get("n_pixels").getAsInt();
+        var text = new StringBuilder(entry.get("id").getAsString())
+                .append(": ").append(pixels).append(" px");
+        if (pixels == 0)
+            return text.toString();
+        if (has(entry, "tau_phi_ns"))
+            text.append(String.format("  tau_phi %.2f ns",
+                    entry.get("tau_phi_ns").getAsDouble()));
+        if (has(entry, "tau_mod_ns"))
+            text.append(String.format("  tau_m %.2f ns",
+                    entry.get("tau_mod_ns").getAsDouble()));
+        if (has(entry, "mean_g") && has(entry, "mean_s"))
+            text.append(String.format("  (G %.3f, S %.3f)",
+                    entry.get("mean_g").getAsDouble(),
+                    entry.get("mean_s").getAsDouble()));
+        return text.toString();
+    }
+
+    private static boolean has(JsonObject entry, String key) {
+        return entry.has(key) && !entry.get(key).isJsonNull();
     }
 
     String requestBody(boolean labels) {
@@ -274,6 +296,15 @@ public class PhasorWindow {
                         "No pixels fell inside the cursors.");
                 return;
             }
+            var stats = new java.util.HashMap<String, JsonObject>();
+            if (reply.has("cursors")) {
+                for (var element : reply.getAsJsonArray("cursors")) {
+                    var entry = element.getAsJsonObject();
+                    stats.put("Phasor " + entry.get("id").getAsString(), entry);
+                }
+            }
+            for (var object : objects)
+                PhasorAnnotations.applyStats(stats.get(object.getName()), object);
             imageData.getHierarchy().addObjects(objects);
             Dialogs.showInfoNotification("FLIMKit phasor",
                     "Added " + objects.size() + " annotation(s)");

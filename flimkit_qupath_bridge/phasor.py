@@ -11,6 +11,38 @@ def valid_pixels(real, mean, min_photons=DEFAULT_MIN_PHOTONS):
     return (mean >= min_photons) & ~np.isnan(real)
 
 
+def _number(value):
+    value = float(value)
+    return value if np.isfinite(value) else None
+
+
+def cursor_stats(real, imag, mean, masks, frequency_mhz):
+    from phasorpy.lifetime import phasor_to_apparent_lifetime
+    real = np.asarray(real, dtype=float)
+    imag = np.asarray(imag, dtype=float)
+    mean = np.asarray(mean, dtype=float)
+    found = []
+    for identifier, mask in masks.items():
+        mask = np.asarray(mask, dtype=bool)
+        entry = {'id': identifier, 'n_pixels': int(mask.sum())}
+        if entry['n_pixels'] and frequency_mhz:
+            g, s = real[mask], imag[mask]
+            with np.errstate(invalid='ignore', divide='ignore'):
+                tau_phi, tau_mod = phasor_to_apparent_lifetime(
+                    g, s, float(frequency_mhz))
+            entry.update({
+                'mean_g': _number(np.nanmean(g)),
+                'mean_s': _number(np.nanmean(s)),
+                'tau_phi_ns': _number(np.nanmedian(tau_phi)),
+                'tau_mod_ns': _number(np.nanmedian(tau_mod)),
+                'tau_phi_min_ns': _number(np.nanmin(tau_phi)),
+                'tau_phi_max_ns': _number(np.nanmax(tau_phi)),
+                'photons': _number(np.nansum(mean[mask])),
+            })
+        found.append(entry)
+    return found
+
+
 def cursor_masks(real, imag, mean, cursors, min_photons=DEFAULT_MIN_PHOTONS):
     from phasorpy.cursor import mask_from_elliptic_cursor
     real = np.asarray(real, dtype=float)
