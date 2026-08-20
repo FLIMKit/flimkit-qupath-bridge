@@ -42,6 +42,28 @@ SCHEMA = (
      'applies_to': ('roi', 'per_pixel'), 'advanced': True, 'default': True},
     {'key': 'fit_sigma', 'label': 'Fit IRF broadening', 'type': 'bool',
      'applies_to': ('roi', 'per_pixel'), 'advanced': True, 'default': False},
+    {'key': 'free_tau', 'label': 'Free tau per pixel', 'type': 'bool',
+     'applies_to': ('per_pixel',), 'advanced': True, 'default': False},
+    {'key': 'lm_restarts', 'label': 'LM restarts', 'type': 'int', 'min': 1,
+     'max': 64, 'applies_to': ('roi', 'per_pixel'), 'advanced': True,
+     'default': 8},
+    {'key': 'de_population', 'label': 'DE population', 'type': 'int', 'min': 5,
+     'max': 200, 'applies_to': ('roi', 'per_pixel'), 'advanced': True,
+     'default': 30},
+    {'key': 'de_maxiter', 'label': 'DE iterations', 'type': 'int', 'min': 100,
+     'max': 20000, 'applies_to': ('roi', 'per_pixel'), 'advanced': True,
+     'default': 5000},
+    {'key': 'fit_start_ns', 'label': 'Fit window start (ns, 0 = auto)',
+     'type': 'float', 'min': 0.0, 'max': 200.0,
+     'applies_to': ('roi', 'per_pixel'), 'advanced': True, 'default': 0.0},
+    {'key': 'fit_end_ns', 'label': 'Fit window end (ns, 0 = auto)',
+     'type': 'float', 'min': 0.0, 'max': 200.0,
+     'applies_to': ('roi', 'per_pixel'), 'advanced': True, 'default': 0.0},
+    {'key': 'correct_pileup', 'label': 'Correct pile-up (Coates)', 'type': 'bool',
+     'applies_to': ('per_pixel',), 'advanced': True, 'default': False},
+    {'key': 'pileup_in_model', 'label': 'Pile-up in the model (needs free tau)',
+     'type': 'bool', 'applies_to': ('roi', 'per_pixel'), 'advanced': True,
+     'default': False},
 )
 
 
@@ -105,6 +127,13 @@ def _validate(merged, known):
         merged[key] = value
     if merged['tau_min_ns'] >= merged['tau_max_ns']:
         raise ValueError('tau_min_ns must be below tau_max_ns')
+    if merged.get('correct_pileup') and merged.get('pileup_in_model'):
+        raise ValueError('pick one pile-up route: correct_pileup rescales the '
+                         'measured decay, pileup_in_model folds pile-up into the '
+                         'fitted model')
+    start, end = merged.get('fit_start_ns', 0.0), merged.get('fit_end_ns', 0.0)
+    if start and end and start >= end:
+        raise ValueError('fit_start_ns must be below fit_end_ns')
 
 
 def masks_from_geojson(collection, image_shape, binning=1):
@@ -154,7 +183,8 @@ def build_irf(n_bins, tcspc_res, decay, cached=None, params=None):
         fwhm_ns=params.get('irf_fwhm_ns', 0.2))
 
 
-def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
+def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None,
+                     n_sync=None):
     stack = np.asarray(stack)
     mask = np.asarray(mask, dtype=bool)
     if mask.shape != stack.shape[:2]:
@@ -174,9 +204,26 @@ def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None):
                      irf_prompt=irf_prompt)
 
 
-def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
+def _window(params):
+    start = float(params.get('fit_start_ns') or 0.0) or None
+    end = float(params.get('fit_end_ns') or 0.0) or None
+    return start, end
+
+
+def _tuning(params):
+    return dict(optimizer=params['optimizer'],
+                n_restarts=int(params.get('lm_restarts', 8)),
+                de_popsize=int(params.get('de_population', 30)),
+                de_maxiter=int(params.get('de_maxiter', 5000)),
+                workers=1)
+
+
+def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None,
+              n_sync=None):
     from flimkit.FLIM.fitters import fit_summed, fit_summed_tail
     decay = np.asarray(decay, dtype=float)
+    start_ns, end_ns = _window(params)
+    sync = n_sync if params.get('pileup_in_model') else None
     if params.get('fit_model') == 'tail':
         irf_source = 'none, the tail fit ignores the instrument response'
         popt, summary = fit_summed_tail(
@@ -186,8 +233,8 @@ def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
             float(params['tau_min_ns']),
             float(params['tau_max_ns']),
             cost_function=params['cost_function'],
-            optimizer=params['optimizer'],
-            workers=1,
+            fit_start_ns=start_ns, fit_end_ns=end_ns, n_sync=sync,
+            **_tuning(params),
         )
     else:
         irf, irf_source = build_irf(n_bins, tcspc_res, decay, cached=irf_prompt,
@@ -199,8 +246,8 @@ def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
             float(params['tau_min_ns']),
             float(params['tau_max_ns']),
             cost_function=params['cost_function'],
-            optimizer=params['optimizer'],
-            workers=1,
+            fit_start_ns=start_ns, fit_end_ns=end_ns, n_sync=sync,
+            **_tuning(params),
         )
     taus = [float(t) for t in summary['taus_ns']]
     amps = [float(a) for a in summary['amps']]
@@ -224,6 +271,7 @@ def fit_decay(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None):
 
 
 def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
+               n_sync=None,
                progress=None, cancel=None):
     """Runs fit_per_pixel over row bands.
 
@@ -240,6 +288,8 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
     bands = max(1, min(int(bands), height))
     summed = stack.reshape(-1, stack.shape[2]).sum(axis=0).astype(float)
     fit_model = params.get('fit_model', 'reconv')
+    start_ns, end_ns = _window(params)
+    sync = n_sync if params.get('pileup_in_model') else None
     if fit_model == 'tail':
         irf = None
         irf_source = 'none, the tail fit ignores the instrument response'
@@ -250,8 +300,8 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             float(params['tau_min_ns']),
             float(params['tau_max_ns']),
             cost_function=params['cost_function'],
-            optimizer=params['optimizer'],
-            workers=1,
+            fit_start_ns=start_ns, fit_end_ns=end_ns, n_sync=sync,
+            **_tuning(params),
         )
     else:
         irf, irf_source = build_irf(n_bins, tcspc_res, summed, cached=irf_prompt,
@@ -263,8 +313,8 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             float(params['tau_min_ns']),
             float(params['tau_max_ns']),
             cost_function=params['cost_function'],
-            optimizer=params['optimizer'],
-            workers=1,
+            fit_start_ns=start_ns, fit_end_ns=end_ns, n_sync=sync,
+            **_tuning(params),
         )
     edges = np.linspace(0, height, bands + 1).astype(int)
     collected = []
@@ -286,6 +336,10 @@ def fit_pixels(stack, tcspc_res, n_bins, params, irf_prompt=None, bands=8,
             fit_idx=summary.get('fit_idx'),
             use_gpu='auto' if params.get('use_gpu', True) else False,
             fit_model=fit_model,
+            free_tau=bool(params.get('free_tau', False)),
+            correct_pileup=bool(params.get('correct_pileup', False)),
+            pileup_in_model=bool(params.get('pileup_in_model', False)),
+            n_sync=n_sync,
         )
         collected.append(maps)
         print(f'    band {index + 1} of {bands}')
