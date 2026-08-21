@@ -21,7 +21,7 @@ classifiers = [
     'Topic :: Scientific/Engineering :: Image Processing',
 ]
 dependencies = [
-    'flimkit>=0.12.0',
+    'flimkit>=0.13.0',
     'numpy',
     'tifffile',
 ]
