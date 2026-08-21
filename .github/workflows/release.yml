@@ -62,4 +62,4 @@ jobs:
 
             Co-registration needs the [QuPath alignment extension](https://github.com/qupath/qupath-extension-align), which QuPath does not ship. Without it you can still exchange images and ROIs, but only between images that already share a coordinate system.
 
-            Requires QuPath 0.7.0 or newer, Python 3.12 or newer, and FLIMKit 0.12.0 or newer.
+            Requires QuPath 0.7.0 or newer, Python 3.12 or newer, and FLIMKit 0.13.0 or newer.
