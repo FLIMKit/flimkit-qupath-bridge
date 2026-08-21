@@ -16,7 +16,7 @@ SCHEMA = (
      'choices': (1, 2, 4, 8), 'applies_to': ('roi', 'per_pixel'),
      'advanced': False, 'default': 1},
     {'key': 'min_photons', 'label': 'Minimum photons per pixel', 'type': 'int',
-     'min': 0, 'max': 100000, 'applies_to': ('roi', 'per_pixel'),
+     'min': 0, 'max': 100000, 'applies_to': ('per_pixel',),
      'advanced': False, 'default': 5},
     {'key': 'irf_strategy', 'label': 'Instrument response', 'type': 'choice',
      'choices': ('machine_irf', 'machine_irf_sigma_full', 'machine_irf_sigma_half',
@@ -183,6 +183,12 @@ def build_irf(n_bins, tcspc_res, decay, cached=None, params=None):
         fwhm_ns=params.get('irf_fwhm_ns', 0.2))
 
 
+def roi_sync(n_sync, n_pixels, n_total):
+    if not n_sync or not n_total:
+        return None
+    return int(float(n_sync) * float(n_pixels) / float(n_total))
+
+
 def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None,
                      n_sync=None):
     stack = np.asarray(stack)
@@ -193,15 +199,10 @@ def fit_masked_decay(stack, mask, tcspc_res, n_bins, params, irf_prompt=None,
     if not mask.any():
         raise ValueError('the region selects no pixels')
     values = np.asarray(stack[mask], dtype=np.float64)
-    if int(params.get('min_photons', 0)):
-        bright = values.sum(axis=1) >= int(params['min_photons'])
-        if not bright.any():
-            raise ValueError(
-                'no pixels in the region reach the minimum photon count')
-        values = values[bright]
     decay = values.sum(axis=0)
     return fit_decay(decay, int(values.shape[0]), tcspc_res, n_bins, params,
-                     irf_prompt=irf_prompt)
+                     irf_prompt=irf_prompt,
+                     n_sync=roi_sync(n_sync, values.shape[0], mask.size))
 
 
 def _window(params):
