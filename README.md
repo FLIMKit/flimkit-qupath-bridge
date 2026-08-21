@@ -83,6 +83,10 @@ The fit itself is recorded too. The global summed fit that seeds the per-pixel p
 
 Summed fits run with `workers=1`. `fit_summed` defaults to `workers=-1`, which starts a process pool inside the server for every fit, and on a spawn platform each worker re-imports FLIMKit. It measured slower than a single worker even on a 10 core machine, 1.74s against 1.15s.
 
+A region's decay is the sum of every pixel the region covers. `min_photons` is a per-pixel setting and is not applied before that sum: it decides which pixels are worth fitting on their own, and summing the dim ones is the point of drawing a region. It used to filter the region too, which on a sparse field threw away almost everything, 244 photons of 8,206 at half a photon per pixel, and read 0.56 ns low. It no longer appears in the ROI fit dialog.
+
+Pile-up in the forward model reaches a region fit as well. The sync count is scaled to the fraction of the field the region covers, since a region that is a sixteenth of the image saw a sixteenth of the pulses. Handing it the whole-image count instead understates pile-up by that same factor and lands back on the uncorrected answer. It needs FLIMKit 0.13.0.
+
 Per-pixel fits use the GPU. They were pinned to the CPU so the row banding could report progress, which cost the 4x the GPU gives on a full field. Each band goes to the GPU now, and `use_gpu` turns that off.
 
 When a pipeline job finishes and a QuPath project is open, the maps go into it. The bridge writes a real-unit intensity image beside the run (uint16 when the photon counts fit, float32 otherwise) and points QuPath at that and at the full-range lifetime TIFF, so both carry photons and nanoseconds rather than a display scaling.
@@ -115,7 +119,7 @@ GPL-3.0. See [LICENSING.md](LICENSING.md).
 ## Requirements
 
 - QuPath 0.7.0 or newer.
-- FLIMKit 0.12.0 or newer, which pip pulls in.
+- FLIMKit 0.13.0 or newer, which pip pulls in.
 - Python 3.12 or newer.
 - The [QuPath alignment extension](https://github.com/qupath/qupath-extension-align), for co-registration.
 
