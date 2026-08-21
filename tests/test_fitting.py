@@ -190,16 +190,15 @@ def test_irf_strategy_is_offered_as_a_choice():
     assert 'gaussian' in entry['choices']
 
 
-def test_min_photons_applies_to_regions_too():
+def test_min_photons_is_a_per_pixel_setting_only():
     entry = next(e for e in fitting.defaults()['schema']
                  if e['key'] == 'min_photons')
 
-    assert 'roi' in entry['applies_to']
-    assert 'per_pixel' in entry['applies_to']
+    assert entry['applies_to'] == ['per_pixel']
     assert fitting.defaults()['values']['min_photons'] == 5
 
 
-def test_dim_pixels_are_excluded_from_a_region_fit():
+def test_dim_pixels_still_count_towards_a_region_fit():
     stack, irf = _synthetic_stack(shape=(4, 4))
     stack = stack.copy()
     stack[0, 0] = 0
@@ -210,19 +209,51 @@ def test_dim_pixels_are_excluded_from_a_region_fit():
                                      'irf_strategy': 'session'}),
         irf_prompt=irf)
 
-    assert result['n_pixels'] == 15
+    assert result['n_pixels'] == 16
 
 
-def test_a_region_of_only_dim_pixels_is_refused():
-    stack, irf = _synthetic_stack(shape=(4, 4))
-    stack = np.zeros_like(stack)
+def test_a_sparse_region_keeps_every_photon():
+    stack, irf = _synthetic_stack(shape=(8, 8))
+    sparse = (stack > 0).astype(stack.dtype)
 
-    with pytest.raises(ValueError, match='minimum photon count'):
-        fitting.fit_masked_decay(
-            stack, np.ones((4, 4), dtype=bool), tcspc_res=5e-11, n_bins=256,
-            params=fitting.merge_params({'n_exp': 1, 'min_photons': 5,
-                                         'irf_strategy': 'session'}),
-            irf_prompt=irf)
+    result = fitting.fit_masked_decay(
+        sparse, np.ones((8, 8), dtype=bool), tcspc_res=5e-11, n_bins=256,
+        params=fitting.merge_params({'n_exp': 1, 'min_photons': 5,
+                                     'irf_strategy': 'session'}),
+        irf_prompt=irf)
+
+    assert result['photon_count'] == int(sparse.sum())
+    assert result['n_pixels'] == 64
+
+
+def test_roi_sync_scales_with_the_fraction_of_the_field_selected():
+    assert fitting.roi_sync(1000000, 256, 1024) == 250000
+    assert fitting.roi_sync(1000000, 1024, 1024) == 1000000
+    assert fitting.roi_sync(None, 256, 1024) is None
+    assert fitting.roi_sync(1000000, 256, 0) is None
+
+
+def test_a_region_fit_reaches_the_model_with_a_scaled_sync_count(monkeypatch):
+    stack, irf = _synthetic_stack(shape=(8, 8))
+    mask = np.zeros((8, 8), dtype=bool)
+    mask[:4] = True
+    seen = {}
+
+    def spy(decay, n_pixels, tcspc_res, n_bins, params, irf_prompt=None,
+            n_sync=None):
+        seen['n_sync'] = n_sync
+        seen['n_pixels'] = n_pixels
+        return {}
+
+    monkeypatch.setattr(fitting, 'fit_decay', spy)
+    fitting.fit_masked_decay(
+        stack, mask, tcspc_res=5e-11, n_bins=256,
+        params=fitting.merge_params({'n_exp': 1, 'pileup_in_model': True,
+                                     'irf_strategy': 'session'}),
+        irf_prompt=irf, n_sync=6400000)
+
+    assert seen['n_pixels'] == 32
+    assert seen['n_sync'] == 3200000
 
 
 def test_tail_is_offered_and_defaults_to_reconv():
