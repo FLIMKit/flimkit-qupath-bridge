@@ -50,7 +50,7 @@ def test_phasor_summary(dataset):
     payload = _call(url, f'/v1/datasets/{ident}/phasor')
 
     assert payload['width'] > 0 and payload['height'] > 0
-    assert payload['frequency_hz'] > 0
+    assert payload['frequency_mhz'] > 0
     assert payload['binning'] in (1, 2, 4, 8, 16)
     assert payload['calibrated'] is False
 
@@ -120,5 +120,44 @@ def test_phasor_works_for_becker_hickl_sdt(served):
     payload = _call(served, f"/v1/datasets/{opened['id']}/phasor")
 
     assert payload['width'] > 0 and payload['height'] > 0
-    assert payload['frequency_hz'] > 0
+    assert payload['frequency_mhz'] > 0
     assert payload['binning'] in (1, 2, 4, 8, 16)
+
+
+def test_phasor_summary_reports_the_options_it_used(dataset):
+    url, ident = dataset
+
+    payload = _call(url, f'/v1/datasets/{ident}/phasor?phasor_filter=median')
+
+    assert payload['options']['phasor_filter'] == 'median'
+    assert payload['frequency_mhz'] > 0
+
+
+def test_a_filtered_phasor_is_not_served_from_the_plain_cache(dataset):
+    url, ident = dataset
+
+    plain = _call(url, f'/v1/datasets/{ident}/phasor/points?bins=64')
+    smoothed = _call(
+        url, f'/v1/datasets/{ident}/phasor/points?bins=64&phasor_filter=median')
+
+    assert plain['counts'] != smoothed['counts']
+
+
+def test_an_unknown_irf_is_a_client_error(dataset):
+    url, ident = dataset
+
+    with pytest.raises(HTTPError) as raised:
+        _call(url, f'/v1/datasets/{ident}/phasor?irf=not-installed')
+
+    assert raised.value.code == 400
+
+
+def test_mask_options_ride_on_the_body(dataset):
+    url, ident = dataset
+
+    payload = _call(url, f'/v1/datasets/{ident}/phasor/mask', 'POST', {
+        'cursors': [{'id': 'c1', 'center_g': 0.5, 'center_s': 0.3, 'radius': 0.2}],
+        'options': {'phasor_filter': 'median'},
+    })
+
+    assert payload['options']['phasor_filter'] == 'median'
