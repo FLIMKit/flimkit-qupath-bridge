@@ -109,6 +109,12 @@ POST /v1/datasets   {"path": "/path/R_2_flimkit"}
 
 A region drawn on that canvas is then fitted from the photons in the stitched cube, not from the displayed image.
 
+## Where the server lives
+
+The server moved out into [flimkit-bridge](https://github.com/FLIMKit/flimkit-bridge) once there were two clients for it, so a fix reaches this extension and the Fiji one at the same time. This repository keeps the QuPath extension and the catalog.
+
+`pip install flimkit-qupath-bridge` still pulls in everything it needs, and `import flimkit_qupath_bridge.server` still resolves, through a shim that re-exports the shared package. The shim exists for extensions built before the move and goes when 0.5.x is retired, so do not build anything new on it.
+
 ## Acknowledgement
 
 The wire protocol used here was designed and first implemented in
