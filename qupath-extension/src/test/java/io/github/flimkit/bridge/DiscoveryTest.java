@@ -94,10 +94,53 @@ class DiscoveryTest {
     }
 
     @Test
+    void readsTheNeutralFileAndProtocol(@TempDir Path directory) throws IOException {
+        Path file = directory.resolve("bridge.json");
+        Files.writeString(file, """
+                {"protocol": "flimkit-bridge", "url": "http://127.0.0.1:8765",
+                 "token": "abc", "pid": 4321}
+                """, StandardCharsets.UTF_8);
+
+        var details = Discovery.read(file);
+
+        assertEquals("http://127.0.0.1:8765", details.url());
+    }
+
+    @Test
+    void prefersTheNeutralFileWhenBothArePresent(@TempDir Path directory)
+            throws IOException {
+        Files.writeString(directory.resolve("bridge.json"), """
+                {"protocol": "flimkit-bridge", "url": "http://127.0.0.1:1", "token": "new"}
+                """, StandardCharsets.UTF_8);
+        Files.writeString(directory.resolve("qupath-bridge.json"), """
+                {"protocol": "flimkit-qupath", "url": "http://127.0.0.1:2", "token": "old"}
+                """, StandardCharsets.UTF_8);
+
+        assertEquals("new", Discovery.readFrom(directory).token());
+    }
+
+    @Test
+    void fallsBackToTheOldFileWhenTheServerIsOlder(@TempDir Path directory)
+            throws IOException {
+        Files.writeString(directory.resolve("qupath-bridge.json"), """
+                {"protocol": "flimkit-qupath", "url": "http://127.0.0.1:2", "token": "old"}
+                """, StandardCharsets.UTF_8);
+
+        assertEquals("old", Discovery.readFrom(directory).token());
+    }
+
+    @Test
+    void namesBothFilesWhenNeitherIsThere(@TempDir Path directory) {
+        var raised = assertThrows(IOException.class, () -> Discovery.readFrom(directory));
+
+        assertTrue(raised.getMessage().contains("bridge.json"), raised.getMessage());
+    }
+
+    @Test
     void theDefaultPathIsUnderTheHomeDirectory() {
         var path = Discovery.defaultPath();
 
-        assertEquals("qupath-bridge.json", path.getFileName().toString());
+        assertEquals("bridge.json", path.getFileName().toString());
         assertEquals(".flimkit", path.getParent().getFileName().toString());
     }
 }

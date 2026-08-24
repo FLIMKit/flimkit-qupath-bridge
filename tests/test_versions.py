@@ -41,15 +41,19 @@ def test_every_half_carries_the_same_version(name, reader):
     assert packaged, 'pyproject.toml has no version'
     found = reader()
     assert found == packaged, (
-        f'{name} says {found} and pyproject.toml says {packaged}; QuPath '
-        f'compares EXTENSION_VERSION against bridge_version, so a stale one '
-        f'makes the mismatch warning wrong')
+        f'{name} says {found} and pyproject.toml says {packaged}; the jar, '
+        f'the gradle build and the packaged add-on are one release and have '
+        f'to move together')
 
 
-def test_the_reported_version_is_the_packaged_one():
-    from flimkit_qupath_bridge.version import report
+def test_the_server_is_a_separate_package_now():
+    from flimkit_bridge.version import report
 
-    assert report()['bridge_version'] == _packaged()
+    found = report()
+    assert found['protocol_version'] == 1
+    assert found['bridge_version'] != _packaged(), (
+        'the jar and the server version independently since the extraction; '
+        'if they happen to match, this test is not proving anything')
 
 
 def test_the_citation_file_names_every_author_the_zenodo_record_does():

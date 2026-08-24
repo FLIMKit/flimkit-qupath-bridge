@@ -20,10 +20,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install FLIMKit
+      - name: Install FLIMKit and the bridge server
         run: |
           python -m pip install --upgrade pip
           pip install 'flimkit @ git+https://github.com/FLIMKit/FLIMKit'
+          pip install 'flimkit-bridge @ git+https://github.com/FLIMKit/flimkit-bridge'
 
       - name: Install the add-on
         run: |

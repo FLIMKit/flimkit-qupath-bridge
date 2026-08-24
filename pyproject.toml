@@ -21,23 +21,15 @@ classifiers = [
     'Topic :: Scientific/Engineering :: Image Processing',
 ]
 dependencies = [
-    'flimkit>=0.13.0',
-    'numpy',
-    'tifffile',
+    'flimkit-bridge>=0.6.0',
 ]
 
 [project.optional-dependencies]
 test = ['pytest']
 
-[project.scripts]
-flimkit-bridge = 'flimkit_qupath_bridge.headless:main'
-
 [project.urls]
 Homepage = 'https://github.com/FLIMKit/flimkit-qupath-bridge'
 Issues = 'https://github.com/FLIMKit/flimkit-qupath-bridge/issues'
-
-[project.entry-points.'flimkit.plugins']
-qupath_bridge = 'flimkit_qupath_bridge'
 
 [tool.setuptools.packages.find]
 include = ['flimkit_qupath_bridge*']
