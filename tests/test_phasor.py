@@ -1,3 +1,6 @@
+import json
+from urllib.request import Request, urlopen
+
 import numpy as np
 import pytest
 
@@ -221,3 +224,161 @@ def test_becker_hickl_sdt_gets_a_phasor():
     assert found['frequency'] > 0
     valid = phasor.valid_pixels(found['real'], found['mean'], min_photons=1.0)
     assert valid.any(), 'no pixel had enough photons for a phasor'
+
+
+def test_settings_lists_the_registered_filters():
+    from flimkit.phasor.filters import phasor_filter_methods
+
+    found = phasor.settings()
+
+    entry = next(e for e in found['schema'] if e['key'] == 'phasor_filter')
+    assert entry['choices'][0] == 'none'
+    assert set(phasor_filter_methods()) <= set(entry['choices'])
+    assert found['values']['phasor_filter'] == 'none'
+
+
+def test_settings_offers_every_installed_machine_irf():
+    from flimkit_qupath_bridge import irf as irf_module
+
+    found = phasor.settings()
+
+    entry = next(e for e in found['schema'] if e['key'] == 'irf')
+    assert entry['choices'][0] == 'none'
+    for installed in irf_module.available():
+        assert installed['id'] in entry['choices']
+
+
+def test_normalise_fills_the_defaults():
+    found = phasor.normalise(None)
+
+    assert found == {'phasor_filter': 'none', 'filter_sigma': 1.0,
+                     'filter_size': 3, 'irf': 'none'}
+
+
+def test_normalise_coerces_the_wire_types():
+    found = phasor.normalise({'filter_sigma': '2.5', 'filter_size': '5'})
+
+    assert found['filter_sigma'] == 2.5
+    assert found['filter_size'] == 5
+
+
+def test_normalise_treats_an_empty_filter_as_none():
+    assert phasor.normalise({'phasor_filter': ''})['phasor_filter'] == 'none'
+    assert phasor.normalise({'phasor_filter': 'None'})['phasor_filter'] == 'none'
+
+
+def test_cache_key_separates_two_filters():
+    plain = phasor.cache_key('d1', {})
+    smoothed = phasor.cache_key('d1', {'phasor_filter': 'median'})
+
+    assert plain != smoothed
+
+
+def test_cache_key_separates_calibrated_from_uncalibrated():
+    plain = phasor.cache_key('d1', {})
+    calibrated = phasor.cache_key('d1', {'irf': 'machine_2026'})
+
+    assert plain != calibrated
+
+
+def test_cache_key_is_stable_across_equivalent_requests():
+    assert phasor.cache_key('d1', {'filter_size': '3'}) == phasor.cache_key('d1', {})
+
+
+def test_no_filter_returns_the_input_untouched(two_populations):
+    real, imag, mean = two_populations
+
+    filtered_real, filtered_imag = phasor.apply_filter(
+        real, imag, mean, {'phasor_filter': 'none'})
+
+    assert filtered_real is real
+    assert filtered_imag is imag
+
+
+def test_the_median_filter_tightens_a_noisy_population(two_populations):
+    real, imag, mean = two_populations
+
+    filtered_real, _ = phasor.apply_filter(
+        real, imag, mean, {'phasor_filter': 'median', 'filter_size': 3})
+
+    assert filtered_real.shape == real.shape
+    assert filtered_real[:8].std() < real[:8].std()
+
+
+def test_the_gaussian_filter_honours_sigma():
+    rng = np.random.default_rng(1)
+    real = rng.normal(0.30, 0.02, (32, 32))
+    imag = rng.normal(0.40, 0.02, (32, 32))
+    mean = np.full((32, 32), 100.0)
+
+    gentle, _ = phasor.apply_filter(
+        real, imag, mean, {'phasor_filter': 'gaussian', 'filter_sigma': 0.5})
+    heavy, _ = phasor.apply_filter(
+        real, imag, mean, {'phasor_filter': 'gaussian', 'filter_sigma': 3.0})
+
+    assert gentle.std() < real.std()
+    assert heavy.std() < gentle.std()
+
+
+def test_an_unknown_filter_is_rejected(two_populations):
+    real, imag, mean = two_populations
+
+    with pytest.raises(ValueError):
+        phasor.apply_filter(real, imag, mean, {'phasor_filter': 'nonsense'})
+
+
+def test_resolve_irf_returns_nothing_for_none():
+    assert phasor.resolve_irf('none') is None
+    assert phasor.resolve_irf('') is None
+
+
+def test_resolve_irf_accepts_a_path_on_disk(tmp_path):
+    xlsx = tmp_path / 'irf.xlsx'
+    xlsx.write_bytes(b'not really an xlsx')
+
+    assert phasor.resolve_irf(str(xlsx)) == str(xlsx)
+
+
+def test_resolve_irf_rejects_an_unknown_id():
+    with pytest.raises(ValueError, match='no such IRF'):
+        phasor.resolve_irf('not-installed')
+
+
+def test_calibration_gets_a_time_axis():
+    import xarray as xr
+
+    class Handle:
+        time_ns = np.arange(32) * 0.1
+
+    stack = np.zeros((4, 4, 32), dtype=float)
+    signal = phasor._signal_array(stack, Handle(), 80.0)
+
+    assert isinstance(signal, xr.DataArray)
+    assert signal.dims == ('Y', 'X', 'H')
+    assert signal.coords['H'].values[1] == pytest.approx(0.1)
+    assert signal.attrs['frequency'] == 80.0
+
+
+def test_a_reader_without_a_time_axis_is_refused():
+    class Handle:
+        time_ns = None
+
+    with pytest.raises(ValueError, match='no per-bin time axis'):
+        phasor._signal_array(np.zeros((4, 4, 32)), Handle(), 80.0)
+
+
+def test_phasor_settings_are_served(serve_state):
+    from flimkit_qupath_bridge.datasets import DatasetRegistry
+    from flimkit_qupath_bridge.server import BridgeState
+    state = BridgeState(images={})
+    state.datasets = DatasetRegistry()
+    url = serve_state(state)
+
+    request = Request(f'{url}/v1/phasor/settings',
+                      headers={'Authorization': 'Bearer test-token'})
+    with urlopen(request) as response:
+        payload = json.load(response)
+
+    assert payload['values']['phasor_filter'] == 'none'
+    keys = [entry['key'] for entry in payload['schema']]
+    assert 'phasor_filter' in keys and 'irf' in keys

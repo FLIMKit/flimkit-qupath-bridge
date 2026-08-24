@@ -5,6 +5,118 @@ import numpy as np
 DEFAULT_MIN_PHOTONS = 0.01
 
 
+PHASOR_SCHEMA = (
+    {'key': 'phasor_filter', 'label': 'Phasor filter', 'type': 'choice',
+     'applies_to': ('phasor',), 'advanced': False, 'default': 'none'},
+    {'key': 'filter_sigma', 'label': 'Gaussian sigma (px)', 'type': 'float',
+     'min': 0.1, 'max': 10.0, 'applies_to': ('phasor',), 'advanced': True,
+     'default': 1.0},
+    {'key': 'filter_size', 'label': 'Median window (px)', 'type': 'int',
+     'min': 3, 'max': 15, 'applies_to': ('phasor',), 'advanced': True,
+     'default': 3},
+    {'key': 'irf', 'label': 'IRF calibration', 'type': 'choice',
+     'applies_to': ('phasor',), 'advanced': False, 'default': 'none'},
+)
+
+_NOTHING = ('', 'none', 'None', 'null')
+
+
+def _choices(key):
+    if key == 'phasor_filter':
+        from flimkit.phasor.filters import phasor_filter_methods
+        return ['none'] + list(phasor_filter_methods())
+    from flimkit_qupath_bridge import irf as irf_module
+    return ['none'] + [entry['id'] for entry in irf_module.available()]
+
+
+def settings():
+    values = {}
+    schema = []
+    for entry in PHASOR_SCHEMA:
+        described = {'key': entry['key'], 'label': entry['label'],
+                     'type': entry['type'],
+                     'applies_to': list(entry['applies_to']),
+                     'advanced': entry['advanced']}
+        for optional in ('min', 'max'):
+            if optional in entry:
+                described[optional] = entry[optional]
+        if entry['type'] == 'choice':
+            described['choices'] = _choices(entry['key'])
+        values[entry['key']] = entry['default']
+        schema.append(described)
+    return {'values': values, 'schema': schema}
+
+
+def normalise(options):
+    options = options or {}
+    found = {entry['key']: entry['default'] for entry in PHASOR_SCHEMA}
+    for entry in PHASOR_SCHEMA:
+        key = entry['key']
+        value = options.get(key)
+        if value is None:
+            continue
+        if entry['type'] == 'float':
+            found[key] = float(value)
+        elif entry['type'] == 'int':
+            found[key] = int(value)
+        else:
+            found[key] = str(value)
+    for key in ('phasor_filter', 'irf'):
+        if found[key] in _NOTHING:
+            found[key] = 'none'
+    return found
+
+
+def cache_key(ident, options):
+    found = normalise(options)
+    return (ident, found['phasor_filter'], found['filter_sigma'],
+            found['filter_size'], found['irf'])
+
+
+def apply_filter(real, imag, mean, options):
+    found = normalise(options)
+    if found['phasor_filter'] == 'none':
+        return real, imag
+    from flimkit.phasor.filters import phasor_filter
+    return phasor_filter(
+        np.asarray(real, dtype=float),
+        np.asarray(imag, dtype=float),
+        found['phasor_filter'],
+        mean=np.asarray(mean, dtype=float),
+        sigma=found['filter_sigma'],
+        size=found['filter_size'])
+
+
+def resolve_irf(choice):
+    import os
+    choice = str(choice or '').strip()
+    if choice in _NOTHING:
+        return None
+    if os.path.exists(choice):
+        return choice
+    from flimkit_qupath_bridge import irf as irf_module
+    for entry in irf_module.available():
+        if entry['id'] == choice:
+            return entry['path']
+    raise ValueError(
+        f'no such IRF: {choice}. Pass an installed machine IRF id from '
+        f'GET /v1/irfs, or the path to an IRF workbook.')
+
+
+def _signal_array(stack, handle, frequency_mhz):
+    import xarray as xr
+    time_ns = getattr(handle, 'time_ns', None)
+    if time_ns is None or len(time_ns) != stack.shape[2]:
+        raise ValueError(
+            'the reader gives no per-bin time axis matching this decay, so an '
+            'IRF cannot be interpolated onto it; read the phasor without '
+            'calibration')
+    signal = xr.DataArray(np.asarray(stack, dtype=float), dims=('Y', 'X', 'H'),
+                          coords={'H': np.asarray(time_ns, dtype=float)})
+    signal.attrs['frequency'] = frequency_mhz
+    return signal
+
+
 def valid_pixels(real, mean, min_photons=DEFAULT_MIN_PHOTONS):
     real = np.asarray(real, dtype=float)
     mean = np.asarray(mean, dtype=float)
@@ -137,16 +249,21 @@ def _first_harmonic(array):
     return array
 
 
-def compute(path, channel=None, irf_path=None, binning=4):
+def compute(path, channel=None, binning=4, options=None):
     """Phasor coordinates for any time-domain reader FLIMKit can open.
 
     FLIMKit's own phasor entry point goes through signal_from_PTUFile and is
     therefore PTU-only. Reading the cube through FLIMFile instead gives the
     same numbers, verified bit-identical on a real PTU, and works for every
     format FLIMFile supports.
+
+    options is a settings dict in the shape normalise() returns. Calibration
+    runs before filtering because flimkit/phasor_launcher.py does it in that
+    order, and the two halves have to agree on the same file.
     """
     from phasorpy.phasor import phasor_from_signal
     from flimkit.formats import FLIMFile
+    found_options = normalise(options)
     handle = FLIMFile(path, verbose=False)
     stack = handle.raw_pixel_stack(channel=channel, binning=binning)
     mean, real, imag = phasor_from_signal(stack, axis=2)
@@ -162,18 +279,20 @@ def compute(path, channel=None, irf_path=None, binning=4):
         'frequency': float(frequency) / 1e6,
         'channel': channel,
         'calibrated': False,
+        'options': found_options,
     }
+    irf_path = resolve_irf(found_options['irf'])
     if irf_path:
         found.update(_calibrate(found, handle, irf_path, stack))
+    found['real'], found['imag'] = apply_filter(
+        found['real'], found['imag'], found['mean'], found_options)
     return found
 
 
 def _calibrate(found, handle, irf_path, stack):
     from flimkit.phasor.signal import (calibrate_signal_with_irf,
                                        calibrate_signal_with_machine_irf)
-    import xarray as xr
-    signal = xr.DataArray(stack, dims=('Y', 'X', 'H'))
-    signal.attrs['frequency'] = found['frequency']
+    signal = _signal_array(stack, handle, found['frequency'])
     if str(irf_path).endswith('.npy'):
         real_cal, imag_cal = calibrate_signal_with_machine_irf(
             signal, found['real'], found['imag'], irf_path, found['frequency'])

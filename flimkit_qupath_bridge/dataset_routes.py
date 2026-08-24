@@ -328,7 +328,25 @@ PHASOR_POINTS_RE = re.compile(r'^/v1/datasets/([^/]+)/phasor/points$')
 PHASOR_MASK_RE = re.compile(r'^/v1/datasets/([^/]+)/phasor/mask$')
 
 
-def _phasor_state(state, ident):
+PHASOR_SETTINGS_PATH = '/v1/phasor/settings'
+
+
+def phasor_settings(state):
+    from flimkit_qupath_bridge import phasor as phasor_module
+    return phasor_module.settings()
+
+
+def _phasor_options(source):
+    from flimkit_qupath_bridge import phasor as phasor_module
+    if isinstance(source, str):
+        source = {key: values[-1] for key, values in parse_qs(source).items()}
+    try:
+        return phasor_module.normalise(source or {})
+    except (TypeError, ValueError) as exc:
+        raise RouteError(400, f'bad phasor settings: {exc}')
+
+
+def _phasor_state(state, ident, options=None):
     from flimkit_qupath_bridge import phasor as phasor_module
     registry = _registry(state)
     try:
@@ -339,18 +357,23 @@ def _phasor_state(state, ident):
         raise RouteError(
             409,
             f"phasor from a decay needs a time-domain file, not {meta['format']}")
+    options = _phasor_options(options)
     held = getattr(state, '_phasor_cache', None)
     if held is None:
         held = {}
         state._phasor_cache = held
-    found = held.get(ident)
+    key = phasor_module.cache_key(ident, options)
+    found = held.get(key)
     if found is None:
         try:
-            found = phasor_module.compute(meta['path'], channel=meta['channel'])
+            found = phasor_module.compute(
+                meta['path'], channel=meta['channel'], options=options)
+        except ValueError as exc:
+            raise RouteError(400, f'phasor failed: {exc}')
         except Exception as exc:
             raise RouteError(500, f'phasor failed: {exc}')
         found['binning'] = DatasetRegistryBinning(meta, found['real'].shape)
-        held[ident] = found
+        held[key] = found
     return meta, found
 
 
@@ -363,8 +386,8 @@ def DatasetRegistryBinning(meta, phasor_shape):
         return None
 
 
-def phasor_summary(state, ident):
-    meta, found = _phasor_state(state, ident)
+def phasor_summary(state, ident, query=''):
+    meta, found = _phasor_state(state, ident, query)
     return {
         'dataset': ident,
         'width': int(found['real'].shape[1]),
@@ -373,6 +396,7 @@ def phasor_summary(state, ident):
         'frequency_mhz': found['frequency'],
         'channel': found['channel'],
         'calibrated': found['calibrated'],
+        'options': found['options'],
     }
 
 
@@ -383,18 +407,19 @@ def phasor_points(state, ident, query):
     if bins < 8 or bins > 1024:
         raise RouteError(400, 'bins must be between 8 and 1024')
     min_photons = float(options.get('min_photons', ['0.01'])[0])
-    _, found = _phasor_state(state, ident)
+    _, found = _phasor_state(state, ident, query)
     payload = phasor_module.density_payload(
         found['real'], found['imag'], found['mean'],
         bins=bins, min_photons=min_photons)
     payload['dataset'] = ident
+    payload['options'] = found['options']
     return payload
 
 
 def phasor_mask(state, ident, payload):
     from flimkit_qupath_bridge import phasor as phasor_module
-    _, found = _phasor_state(state, ident)
     payload = payload or {}
+    _, found = _phasor_state(state, ident, payload.get('options'))
     cursors = payload.get('cursors')
     if not isinstance(cursors, list) or not cursors:
         raise RouteError(400, 'cursors must be a non-empty list')
@@ -411,8 +436,10 @@ def phasor_mask(state, ident, payload):
             found['real'], found['imag'], found['mean'], cursors, min_photons)
         return {'dataset': ident, 'binning': found['binning'],
                 'cursors': counts, 'labels': _encode_labels(labels),
-                'width': int(labels.shape[1]), 'height': int(labels.shape[0])}
-    return {'dataset': ident, 'binning': found['binning'], 'cursors': counts}
+                'width': int(labels.shape[1]), 'height': int(labels.shape[0]),
+                'options': found['options']}
+    return {'dataset': ident, 'binning': found['binning'], 'cursors': counts,
+            'options': found['options']}
 
 
 def _encode_labels(labels):

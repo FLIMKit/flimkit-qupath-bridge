@@ -108,6 +108,12 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                     return
                 self._route(lambda r: r.pipeline_defaults(state))
                 return
+            if self.path == '/v1/phasor/settings':
+                if not self._authorized():
+                    self.send_error(401)
+                    return
+                self._route(lambda r: r.phasor_settings(state))
+                return
             if self.path == '/v1/irfs':
                 if not self._authorized():
                     self.send_error(401)
@@ -310,7 +316,8 @@ def create_server(host: str, port: int, token: str, state: BridgeState,
                 if not self._authorized():
                     self.send_error(401)
                     return True
-                self._route(lambda r: r.phasor_summary(state, found.group(1)))
+                self._route(
+                    lambda r: r.phasor_summary(state, found.group(1), parsed.query))
                 return True
             found = routes.PLANES_RE.match(parsed.path)
             if found:
