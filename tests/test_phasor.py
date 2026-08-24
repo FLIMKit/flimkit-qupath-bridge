@@ -322,3 +322,43 @@ def test_an_unknown_filter_is_rejected(two_populations):
 
     with pytest.raises(ValueError):
         phasor.apply_filter(real, imag, mean, {'phasor_filter': 'nonsense'})
+
+
+def test_resolve_irf_returns_nothing_for_none():
+    assert phasor.resolve_irf('none') is None
+    assert phasor.resolve_irf('') is None
+
+
+def test_resolve_irf_accepts_a_path_on_disk(tmp_path):
+    xlsx = tmp_path / 'irf.xlsx'
+    xlsx.write_bytes(b'not really an xlsx')
+
+    assert phasor.resolve_irf(str(xlsx)) == str(xlsx)
+
+
+def test_resolve_irf_rejects_an_unknown_id():
+    with pytest.raises(ValueError, match='no such IRF'):
+        phasor.resolve_irf('not-installed')
+
+
+def test_calibration_gets_a_time_axis():
+    import xarray as xr
+
+    class Handle:
+        time_ns = np.arange(32) * 0.1
+
+    stack = np.zeros((4, 4, 32), dtype=float)
+    signal = phasor._signal_array(stack, Handle(), 80.0)
+
+    assert isinstance(signal, xr.DataArray)
+    assert signal.dims == ('Y', 'X', 'H')
+    assert signal.coords['H'].values[1] == pytest.approx(0.1)
+    assert signal.attrs['frequency'] == 80.0
+
+
+def test_a_reader_without_a_time_axis_is_refused():
+    class Handle:
+        time_ns = None
+
+    with pytest.raises(ValueError, match='no per-bin time axis'):
+        phasor._signal_array(np.zeros((4, 4, 32)), Handle(), 80.0)

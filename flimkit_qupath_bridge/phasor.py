@@ -87,6 +87,36 @@ def apply_filter(real, imag, mean, options):
         size=found['filter_size'])
 
 
+def resolve_irf(choice):
+    import os
+    choice = str(choice or '').strip()
+    if choice in _NOTHING:
+        return None
+    if os.path.exists(choice):
+        return choice
+    from flimkit_qupath_bridge import irf as irf_module
+    for entry in irf_module.available():
+        if entry['id'] == choice:
+            return entry['path']
+    raise ValueError(
+        f'no such IRF: {choice}. Pass an installed machine IRF id from '
+        f'GET /v1/irfs, or the path to an IRF workbook.')
+
+
+def _signal_array(stack, handle, frequency_mhz):
+    import xarray as xr
+    time_ns = getattr(handle, 'time_ns', None)
+    if time_ns is None or len(time_ns) != stack.shape[2]:
+        raise ValueError(
+            'the reader gives no per-bin time axis matching this decay, so an '
+            'IRF cannot be interpolated onto it; read the phasor without '
+            'calibration')
+    signal = xr.DataArray(np.asarray(stack, dtype=float), dims=('Y', 'X', 'H'),
+                          coords={'H': np.asarray(time_ns, dtype=float)})
+    signal.attrs['frequency'] = frequency_mhz
+    return signal
+
+
 def valid_pixels(real, mean, min_photons=DEFAULT_MIN_PHOTONS):
     real = np.asarray(real, dtype=float)
     mean = np.asarray(mean, dtype=float)
@@ -219,16 +249,21 @@ def _first_harmonic(array):
     return array
 
 
-def compute(path, channel=None, irf_path=None, binning=4):
+def compute(path, channel=None, binning=4, options=None):
     """Phasor coordinates for any time-domain reader FLIMKit can open.
 
     FLIMKit's own phasor entry point goes through signal_from_PTUFile and is
     therefore PTU-only. Reading the cube through FLIMFile instead gives the
     same numbers, verified bit-identical on a real PTU, and works for every
     format FLIMFile supports.
+
+    options is a settings dict in the shape normalise() returns. Calibration
+    runs before filtering because flimkit/phasor_launcher.py does it in that
+    order, and the two halves have to agree on the same file.
     """
     from phasorpy.phasor import phasor_from_signal
     from flimkit.formats import FLIMFile
+    found_options = normalise(options)
     handle = FLIMFile(path, verbose=False)
     stack = handle.raw_pixel_stack(channel=channel, binning=binning)
     mean, real, imag = phasor_from_signal(stack, axis=2)
@@ -244,18 +279,20 @@ def compute(path, channel=None, irf_path=None, binning=4):
         'frequency': float(frequency) / 1e6,
         'channel': channel,
         'calibrated': False,
+        'options': found_options,
     }
+    irf_path = resolve_irf(found_options['irf'])
     if irf_path:
         found.update(_calibrate(found, handle, irf_path, stack))
+    found['real'], found['imag'] = apply_filter(
+        found['real'], found['imag'], found['mean'], found_options)
     return found
 
 
 def _calibrate(found, handle, irf_path, stack):
     from flimkit.phasor.signal import (calibrate_signal_with_irf,
                                        calibrate_signal_with_machine_irf)
-    import xarray as xr
-    signal = xr.DataArray(stack, dims=('Y', 'X', 'H'))
-    signal.attrs['frequency'] = found['frequency']
+    signal = _signal_array(stack, handle, found['frequency'])
     if str(irf_path).endswith('.npy'):
         real_cal, imag_cal = calibrate_signal_with_machine_irf(
             signal, found['real'], found['imag'], irf_path, found['frequency'])
