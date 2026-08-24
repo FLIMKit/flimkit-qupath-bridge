@@ -1,3 +1,6 @@
+import json
+from urllib.request import Request, urlopen
+
 import numpy as np
 import pytest
 
@@ -362,3 +365,20 @@ def test_a_reader_without_a_time_axis_is_refused():
 
     with pytest.raises(ValueError, match='no per-bin time axis'):
         phasor._signal_array(np.zeros((4, 4, 32)), Handle(), 80.0)
+
+
+def test_phasor_settings_are_served(serve_state):
+    from flimkit_qupath_bridge.datasets import DatasetRegistry
+    from flimkit_qupath_bridge.server import BridgeState
+    state = BridgeState(images={})
+    state.datasets = DatasetRegistry()
+    url = serve_state(state)
+
+    request = Request(f'{url}/v1/phasor/settings',
+                      headers={'Authorization': 'Bearer test-token'})
+    with urlopen(request) as response:
+        payload = json.load(response)
+
+    assert payload['values']['phasor_filter'] == 'none'
+    keys = [entry['key'] for entry in payload['schema']]
+    assert 'phasor_filter' in keys and 'irf' in keys
