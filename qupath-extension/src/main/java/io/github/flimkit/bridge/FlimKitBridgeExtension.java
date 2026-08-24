@@ -41,6 +41,8 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
 
     static final String EXTENSION_VERSION = "0.5.0";
 
+    static final int PROTOCOL_VERSION = 1;
+
     @Override
     public String getName() {
         return "FLIMKit bridge";
@@ -143,26 +145,32 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
     }
 
     void warnOnVersionMismatch(String reported) {
-        String theirs = versionIn(reported);
-        if (theirs == null || theirs.equals(EXTENSION_VERSION))
-            return;
-        Dialogs.showWarningNotification(getName(),
-                "This extension is " + EXTENSION_VERSION + " and the bridge it "
-                        + "connected to is " + theirs + ".\n\nUpdate whichever is "
-                        + "older, or settings the other side does not know about "
-                        + "will be missing.");
+        String warning = mismatchWarning(reported);
+        if (warning != null)
+            Dialogs.showWarningNotification(getName(), warning);
     }
 
-    static String versionIn(String reported) {
+    static String mismatchWarning(String reported) {
         if (reported == null)
             return null;
         try {
-            var payload = JsonParser.parseString(reported).getAsJsonObject();
-            if (payload.has("bridge_version") && !payload.get("bridge_version").isJsonNull())
-                return payload.get("bridge_version").getAsString();
-        } catch (RuntimeException ignored) {
+            return mismatchWarning(JsonParser.parseString(reported).getAsJsonObject());
+        } catch (RuntimeException e) {
+            return null;
         }
-        return null;
+    }
+
+    static String mismatchWarning(JsonObject status) {
+        if (!status.has("protocol_version") || status.get("protocol_version").isJsonNull())
+            return "This FLIMKit bridge is too old to say which protocol it speaks."
+                    + "\n\nUpdate it with: pip install -U flimkit-bridge";
+        int theirs = status.get("protocol_version").getAsInt();
+        if (theirs == PROTOCOL_VERSION)
+            return null;
+        return "This extension speaks bridge protocol " + PROTOCOL_VERSION
+                + " and the bridge speaks " + theirs
+                + ".\n\nUpdate whichever is older, or settings the other side does "
+                + "not know about will be missing.";
     }
 
     private void addImages(QuPathGUI qupath) {
