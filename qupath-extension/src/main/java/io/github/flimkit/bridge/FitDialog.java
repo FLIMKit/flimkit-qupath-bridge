@@ -39,10 +39,16 @@ public class FitDialog {
     }
 
     public JsonObject prompt(String title, String mode) {
+        return prompt(title, mode, "Fit");
+    }
+
+    public JsonObject prompt(String title, String mode, String confirmLabel) {
         var dialog = new Dialog<ButtonType>();
         dialog.setTitle(title);
-        dialog.setHeaderText("Fit settings inherited from FLIMKit; "
-                + "only the fields below are overridden.");
+        dialog.setHeaderText(mode.equals("phasor")
+                ? "Phasor settings applied to this dataset."
+                : "Fit settings inherited from FLIMKit; "
+                        + "only the fields below are overridden.");
         var grid = new GridPane();
         grid.setHgap(8);
         grid.setVgap(6);
@@ -86,7 +92,7 @@ public class FitDialog {
         }
         dialog.getDialogPane().setContent(content);
         dialog.getDialogPane().getButtonTypes().addAll(
-                new ButtonType("Fit", ButtonBar.ButtonData.OK_DONE),
+                new ButtonType(confirmLabel, ButtonBar.ButtonData.OK_DONE),
                 ButtonType.CANCEL);
         var chosen = dialog.showAndWait();
         if (chosen.isEmpty()

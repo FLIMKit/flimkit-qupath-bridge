@@ -227,9 +227,24 @@ public class BridgeClient {
         return response.body();
     }
 
-    public String phasorSummary(String datasetId) throws IOException, InterruptedException {
+    public String phasorSettings() throws IOException, InterruptedException {
         var response = client.send(
-                request("/v1/datasets/" + datasetId + "/phasor").GET().build(),
+                request("/v1/phasor/settings").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET phasor settings returned " + response.statusCode());
+        return response.body();
+    }
+
+    static String query(String options) {
+        return options == null || options.isEmpty() ? "" : "?" + options;
+    }
+
+    public String phasorSummary(String datasetId, String options)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/datasets/" + datasetId + "/phasor" + query(options))
+                        .GET().build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() != 200)
             throw new IOException("GET phasor returned " + response.statusCode()
@@ -237,10 +252,11 @@ public class BridgeClient {
         return response.body();
     }
 
-    public String phasorPoints(String datasetId, int bins)
+    public String phasorPoints(String datasetId, int bins, String options)
             throws IOException, InterruptedException {
         var response = client.send(
-                request("/v1/datasets/" + datasetId + "/phasor/points?bins=" + bins)
+                request("/v1/datasets/" + datasetId + "/phasor/points?bins=" + bins
+                        + (options == null || options.isEmpty() ? "" : "&" + options))
                         .GET().build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() != 200)

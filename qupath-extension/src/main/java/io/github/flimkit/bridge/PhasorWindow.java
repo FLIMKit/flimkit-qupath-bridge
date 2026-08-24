@@ -24,6 +24,8 @@ import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
 
 import java.awt.image.BufferedImage;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -51,6 +53,7 @@ public class PhasorWindow {
     private final ListView<String> cursorList = new ListView<>();
     private final List<Cursor> cursors = new ArrayList<>();
 
+    private JsonObject options = new JsonObject();
     private int[] counts = new int[0];
     private int maxCount = 1;
     private int binning = 1;
@@ -66,7 +69,7 @@ public class PhasorWindow {
 
     public void show() throws Exception {
         var summary = JsonParser.parseString(
-                client.phasorSummary(datasetId)).getAsJsonObject();
+                client.phasorSummary(datasetId, optionsQuery())).getAsJsonObject();
         binning = summary.get("binning").isJsonNull()
                 ? 1 : summary.get("binning").getAsInt();
         loadDensity();
@@ -101,9 +104,11 @@ public class PhasorWindow {
                 refresh();
             }
         });
+        var settings = new Button("Settings...");
+        settings.setOnAction(e -> applySettings());
         var create = new Button("Create annotations");
         create.setOnAction(e -> createAnnotations());
-        side.getChildren().addAll(add, remove, create);
+        side.getChildren().addAll(add, remove, settings, create);
         root.setRight(side);
 
         canvas.setOnMousePressed(e -> {
@@ -132,9 +137,37 @@ public class PhasorWindow {
         refresh();
     }
 
+    String optionsQuery() {
+        var parts = new ArrayList<String>();
+        for (var key : options.keySet()) {
+            parts.add(URLEncoder.encode(key, StandardCharsets.UTF_8) + "="
+                    + URLEncoder.encode(options.get(key).getAsString(),
+                            StandardCharsets.UTF_8));
+        }
+        return String.join("&", parts);
+    }
+
+    private void applySettings() {
+        try {
+            var defaults = JsonParser.parseString(
+                    client.phasorSettings()).getAsJsonObject();
+            var chosen = new FitDialog(defaults)
+                    .prompt("FLIMKit phasor settings", "phasor", "Apply");
+            if (chosen == null)
+                return;
+            options = chosen;
+            loadDensity();
+            refresh();
+        } catch (Exception e) {
+            logger.error("Could not apply phasor settings", e);
+            Dialogs.showErrorMessage("FLIMKit phasor",
+                    "Could not apply the settings\n\n" + e.getMessage());
+        }
+    }
+
     private void loadDensity() throws Exception {
         var payload = JsonParser.parseString(
-                client.phasorPoints(datasetId, BINS)).getAsJsonObject();
+                client.phasorPoints(datasetId, BINS, optionsQuery())).getAsJsonObject();
         byte[] raw = Base64.getDecoder().decode(payload.get("counts").getAsString());
         counts = new int[raw.length / 4];
         for (int i = 0; i < counts.length; i++) {
@@ -268,6 +301,8 @@ public class PhasorWindow {
         }
         body.add("cursors", array);
         body.addProperty("min_photons", 1.0);
+        if (!options.entrySet().isEmpty())
+            body.add("options", options);
         if (labels)
             body.addProperty("output", "labels");
         return body.toString();
