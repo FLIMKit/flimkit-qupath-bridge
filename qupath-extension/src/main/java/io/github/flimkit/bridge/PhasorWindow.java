@@ -10,7 +10,9 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -49,15 +51,18 @@ public class PhasorWindow {
     private final String datasetId;
     private final ImageData<BufferedImage> imageData;
 
+    private static final double MIN_VERTEX_GAP = 3.0;
+
     private final Canvas canvas = new Canvas(520, 380);
     private final ListView<String> cursorList = new ListView<>();
-    private final List<Cursor> cursors = new ArrayList<>();
+    final List<Cursor> cursors = new ArrayList<>();
 
-    private JsonObject options = new JsonObject();
+    JsonObject options = new JsonObject();
     private int[] counts = new int[0];
     private int maxCount = 1;
     private int binning = 1;
     private Cursor dragging;
+    private List<double[]> outline;
 
     public PhasorWindow(QuPathGUI qupath, BridgeClient client, String datasetId,
                         ImageData<BufferedImage> imageData) {
@@ -104,14 +109,22 @@ public class PhasorWindow {
                 refresh();
             }
         });
+        var draw = new ToggleButton("Draw region");
+        draw.setTooltip(new Tooltip(
+                "Drag on the plot to trace an outline instead of placing an ellipse."));
         var settings = new Button("Settings...");
         settings.setOnAction(e -> applySettings());
         var create = new Button("Create annotations");
         create.setOnAction(e -> createAnnotations());
-        side.getChildren().addAll(add, remove, settings, create);
+        side.getChildren().addAll(add, remove, draw, settings, create);
         root.setRight(side);
 
         canvas.setOnMousePressed(e -> {
+            if (draw.isSelected()) {
+                outline = new ArrayList<>();
+                outline.add(new double[] {e.getX(), e.getY()});
+                return;
+            }
             dragging = nearest(e.getX(), e.getY());
             if (dragging == null && cursors.size() < COLOURS.length) {
                 dragging = new Cursor("c" + (cursors.size() + 1),
@@ -121,6 +134,13 @@ public class PhasorWindow {
             refresh();
         });
         canvas.setOnMouseDragged(e -> {
+            if (outline != null) {
+                double[] last = outline.get(outline.size() - 1);
+                if (Math.hypot(e.getX() - last[0], e.getY() - last[1]) >= MIN_VERTEX_GAP)
+                    outline.add(new double[] {e.getX(), e.getY()});
+                drawWithOutline();
+                return;
+            }
             if (dragging != null) {
                 dragging.g = toG(e.getX());
                 dragging.s = toS(e.getY());
@@ -128,6 +148,11 @@ public class PhasorWindow {
             }
         });
         canvas.setOnMouseReleased(e -> {
+            if (outline != null) {
+                finishOutline();
+                draw.setSelected(false);
+                return;
+            }
             dragging = null;
             refresh();
         });
@@ -137,7 +162,46 @@ public class PhasorWindow {
         refresh();
     }
 
+    private void finishOutline() {
+        var traced = outline;
+        outline = null;
+        if (traced.size() < 3) {
+            Dialogs.showInfoNotification("FLIMKit phasor",
+                    "That outline had fewer than three points. Drag to trace one.");
+            refresh();
+            return;
+        }
+        if (cursors.size() >= COLOURS.length) {
+            Dialogs.showErrorMessage("FLIMKit phasor",
+                    "Six cursors is the limit, matching FLIMKit's palette.");
+            refresh();
+            return;
+        }
+        var vertices = new ArrayList<double[]>();
+        for (var point : traced)
+            vertices.add(new double[] {toG(point[0]), toS(point[1])});
+        cursors.add(new Cursor("c" + (cursors.size() + 1), vertices));
+        refresh();
+    }
+
+    private void drawWithOutline() {
+        draw();
+        if (outline == null || outline.size() < 2)
+            return;
+        GraphicsContext g = canvas.getGraphicsContext2D();
+        g.setStroke(COLOURS[cursors.size() % COLOURS.length]);
+        g.setLineWidth(2);
+        for (int i = 1; i < outline.size(); i++) {
+            g.strokeLine(outline.get(i - 1)[0], outline.get(i - 1)[1],
+                    outline.get(i)[0], outline.get(i)[1]);
+        }
+    }
+
     String optionsQuery() {
+        return optionsQuery(options);
+    }
+
+    static String optionsQuery(JsonObject options) {
         var parts = new ArrayList<String>();
         for (var key : options.keySet()) {
             parts.add(URLEncoder.encode(key, StandardCharsets.UTF_8) + "="
@@ -197,6 +261,8 @@ public class PhasorWindow {
 
     private Cursor nearest(double x, double y) {
         for (var cursor : cursors) {
+            if (cursor.vertices != null)
+                continue;
             double dx = toX(cursor.g) - x;
             double dy = toY(cursor.s) - y;
             if (Math.hypot(dx, dy) < 12)
@@ -242,9 +308,25 @@ public class PhasorWindow {
             var cursor = cursors.get(i);
             g.setStroke(COLOURS[i % COLOURS.length]);
             g.setLineWidth(2);
+            if (cursor.vertices != null) {
+                strokeOutline(g, cursor.vertices);
+                continue;
+            }
             double rx = cursor.radius / (G_MAX - G_MIN) * canvas.getWidth();
             double ry = cursor.radius / (S_MAX - S_MIN) * canvas.getHeight();
             g.strokeOval(toX(cursor.g) - rx, toY(cursor.s) - ry, rx * 2, ry * 2);
+        }
+    }
+
+    private void strokeOutline(GraphicsContext g, List<double[]> vertices) {
+        double previousX = toX(vertices.get(vertices.size() - 1)[0]);
+        double previousY = toY(vertices.get(vertices.size() - 1)[1]);
+        for (var vertex : vertices) {
+            double x = toX(vertex[0]);
+            double y = toY(vertex[1]);
+            g.strokeLine(previousX, previousY, x, y);
+            previousX = x;
+            previousY = y;
         }
     }
 
@@ -289,11 +371,28 @@ public class PhasorWindow {
     }
 
     String requestBody(boolean labels) {
+        return requestBody(cursors, options, labels);
+    }
+
+    static String requestBody(List<Cursor> cursors, JsonObject options, boolean labels) {
         var body = new JsonObject();
         var array = new JsonArray();
         for (var cursor : cursors) {
             var entry = new JsonObject();
             entry.addProperty("id", cursor.id);
+            if (cursor.vertices != null) {
+                entry.addProperty("type", "polygon");
+                var vertices = new JsonArray();
+                for (var vertex : cursor.vertices) {
+                    var pair = new JsonArray();
+                    pair.add(vertex[0]);
+                    pair.add(vertex[1]);
+                    vertices.add(pair);
+                }
+                entry.add("vertices", vertices);
+                array.add(entry);
+                continue;
+            }
             entry.addProperty("center_g", cursor.g);
             entry.addProperty("center_s", cursor.s);
             entry.addProperty("radius", cursor.radius);
@@ -352,15 +451,25 @@ public class PhasorWindow {
 
     static final class Cursor {
         final String id;
+        final List<double[]> vertices;
         double g;
         double s;
         double radius;
 
         Cursor(String id, double g, double s, double radius) {
             this.id = id;
+            this.vertices = null;
             this.g = g;
             this.s = s;
             this.radius = radius;
+        }
+
+        Cursor(String id, List<double[]> vertices) {
+            this.id = id;
+            this.vertices = vertices;
+            this.g = 0;
+            this.s = 0;
+            this.radius = 0;
         }
     }
 }
