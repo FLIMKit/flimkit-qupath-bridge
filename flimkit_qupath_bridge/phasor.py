@@ -73,6 +73,20 @@ def cache_key(ident, options):
             found['filter_size'], found['irf'])
 
 
+def apply_filter(real, imag, mean, options):
+    found = normalise(options)
+    if found['phasor_filter'] == 'none':
+        return real, imag
+    from flimkit.phasor.filters import phasor_filter
+    return phasor_filter(
+        np.asarray(real, dtype=float),
+        np.asarray(imag, dtype=float),
+        found['phasor_filter'],
+        mean=np.asarray(mean, dtype=float),
+        sigma=found['filter_sigma'],
+        size=found['filter_size'])
+
+
 def valid_pixels(real, mean, min_photons=DEFAULT_MIN_PHOTONS):
     real = np.asarray(real, dtype=float)
     mean = np.asarray(mean, dtype=float)

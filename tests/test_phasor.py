@@ -280,3 +280,45 @@ def test_cache_key_separates_calibrated_from_uncalibrated():
 
 def test_cache_key_is_stable_across_equivalent_requests():
     assert phasor.cache_key('d1', {'filter_size': '3'}) == phasor.cache_key('d1', {})
+
+
+def test_no_filter_returns_the_input_untouched(two_populations):
+    real, imag, mean = two_populations
+
+    filtered_real, filtered_imag = phasor.apply_filter(
+        real, imag, mean, {'phasor_filter': 'none'})
+
+    assert filtered_real is real
+    assert filtered_imag is imag
+
+
+def test_the_median_filter_tightens_a_noisy_population(two_populations):
+    real, imag, mean = two_populations
+
+    filtered_real, _ = phasor.apply_filter(
+        real, imag, mean, {'phasor_filter': 'median', 'filter_size': 3})
+
+    assert filtered_real.shape == real.shape
+    assert filtered_real[:8].std() < real[:8].std()
+
+
+def test_the_gaussian_filter_honours_sigma():
+    rng = np.random.default_rng(1)
+    real = rng.normal(0.30, 0.02, (32, 32))
+    imag = rng.normal(0.40, 0.02, (32, 32))
+    mean = np.full((32, 32), 100.0)
+
+    gentle, _ = phasor.apply_filter(
+        real, imag, mean, {'phasor_filter': 'gaussian', 'filter_sigma': 0.5})
+    heavy, _ = phasor.apply_filter(
+        real, imag, mean, {'phasor_filter': 'gaussian', 'filter_sigma': 3.0})
+
+    assert gentle.std() < real.std()
+    assert heavy.std() < gentle.std()
+
+
+def test_an_unknown_filter_is_rejected(two_populations):
+    real, imag, mean = two_populations
+
+    with pytest.raises(ValueError):
+        phasor.apply_filter(real, imag, mean, {'phasor_filter': 'nonsense'})
