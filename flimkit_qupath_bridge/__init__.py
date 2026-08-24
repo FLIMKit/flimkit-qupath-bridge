@@ -1,4 +1,5 @@
 import sys
+import warnings
 
 import flimkit_bridge
 from flimkit_bridge import (dataset_routes, datasets, discovery, fitting,
@@ -29,3 +30,12 @@ globals().update({
     for name in dir(flimkit_bridge)
     if not name.startswith('_')
 })
+
+warnings.warn(
+    'flimkit_qupath_bridge is a compatibility shim and will be removed in '
+    '0.7.0. The server it re-exports is flimkit-bridge; import flimkit_bridge '
+    'instead. Installing the QuPath extension needs only the jar and '
+    'pip install flimkit-bridge.',
+    DeprecationWarning,
+    stacklevel=2,
+)

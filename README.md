@@ -113,7 +113,21 @@ A region drawn on that canvas is then fitted from the photons in the stitched cu
 
 The server moved out into [flimkit-bridge](https://github.com/FLIMKit/flimkit-bridge) once there were two clients for it, so a fix reaches this extension and the Fiji one at the same time. This repository keeps the QuPath extension and the catalog.
 
-`pip install flimkit-qupath-bridge` still pulls in everything it needs, and `import flimkit_qupath_bridge.server` still resolves, through a shim that re-exports the shared package. The shim exists for extensions built before the move and goes when 0.5.x is retired, so do not build anything new on it.
+`pip install flimkit-qupath-bridge` still pulls in everything it needs, and `import flimkit_qupath_bridge.server` still resolves, through a shim that re-exports the shared package.
+
+## The Python package is being sunset
+
+There is nothing QuPath-specific left in it. From 0.6.0 the extension needs two things and neither of them is this package:
+
+```bash
+pip install flimkit-bridge
+```
+
+and the jar, from the QuPath catalog or dropped into your extensions directory.
+
+`flimkit_qupath_bridge` warns on import and will be removed in 0.7.0. It exists so that anything importing it today keeps working while the jars in the wild are replaced. The 0.5.0 jar reads `~/.flimkit/bridge.json` and falls back to the older `qupath-bridge.json`, so once it is the version people have, the server can stop writing the second file as well.
+
+If you install the package today, nothing breaks. If you are writing something new, depend on `flimkit-bridge`.
 
 ## Acknowledgement
 
