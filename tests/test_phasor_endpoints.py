@@ -161,3 +161,84 @@ def test_mask_options_ride_on_the_body(dataset):
     })
 
     assert payload['options']['phasor_filter'] == 'median'
+
+
+FULL_PLANE = [[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]]
+LEFT_HALF = [[-5.0, -5.0], [0.5, -5.0], [0.5, 5.0], [-5.0, 5.0]]
+RIGHT_HALF = [[0.5, -5.0], [5.0, -5.0], [5.0, 5.0], [0.5, 5.0]]
+
+
+def _mask(url, ident, cursors, min_photons=1.0, output=None):
+    body = {'cursors': cursors, 'min_photons': min_photons}
+    if output:
+        body['output'] = output
+    return _call(url, f'/v1/datasets/{ident}/phasor/mask', 'POST', body)
+
+
+def test_a_polygon_covering_everything_selects_every_valid_pixel(dataset):
+    url, ident = dataset
+    points = _call(url, f'/v1/datasets/{ident}/phasor/points?bins=64&min_photons=1.0')
+
+    payload = _mask(url, ident, [
+        {'id': 'p1', 'type': 'polygon', 'vertices': FULL_PLANE}])
+
+    assert payload['cursors'][0]['n_pixels'] == points['n_valid']
+
+
+def test_two_polygons_partition_the_valid_pixels(dataset):
+    url, ident = dataset
+    points = _call(url, f'/v1/datasets/{ident}/phasor/points?bins=64&min_photons=1.0')
+
+    payload = _mask(url, ident, [
+        {'id': 'left', 'type': 'polygon', 'vertices': LEFT_HALF},
+        {'id': 'right', 'type': 'polygon', 'vertices': RIGHT_HALF}])
+
+    counts = {entry['id']: entry['n_pixels'] for entry in payload['cursors']}
+    assert counts['left'] + counts['right'] == points['n_valid']
+
+
+def test_a_polygon_reports_a_lifetime(dataset):
+    url, ident = dataset
+
+    payload = _mask(url, ident, [
+        {'id': 'p1', 'type': 'polygon', 'vertices': FULL_PLANE}])
+
+    entry = payload['cursors'][0]
+    assert entry['n_pixels'] > 0
+    assert entry['tau_phi_ns'] is not None
+    assert entry['photons'] > 0
+
+
+def test_a_polygon_becomes_a_label_image(dataset):
+    url, ident = dataset
+
+    payload = _mask(url, ident, [
+        {'id': 'p1', 'type': 'polygon', 'vertices': FULL_PLANE}],
+        output='labels')
+
+    labels = np.frombuffer(base64.b64decode(payload['labels']), dtype=np.uint8)
+    assert labels.size == payload['width'] * payload['height']
+    assert int((labels == 1).sum()) == payload['cursors'][0]['n_pixels']
+
+
+def test_a_polygon_and_an_ellipse_are_labelled_apart(dataset):
+    url, ident = dataset
+
+    payload = _mask(url, ident, [
+        {'id': 'e1', 'center_g': 0.5, 'center_s': 0.3, 'radius': 0.1},
+        {'id': 'p1', 'type': 'polygon', 'vertices': FULL_PLANE}],
+        output='labels')
+
+    labels = np.frombuffer(base64.b64decode(payload['labels']), dtype=np.uint8)
+    assert set(np.unique(labels)) <= {0, 1, 2}
+    assert int((labels == 1).sum()) == payload['cursors'][0]['n_pixels']
+
+
+def test_a_polygon_with_two_vertices_is_a_client_error(dataset):
+    url, ident = dataset
+
+    with pytest.raises(HTTPError) as raised:
+        _mask(url, ident, [
+            {'id': 'p1', 'type': 'polygon', 'vertices': [[0.2, 0.3], [0.4, 0.5]]}])
+
+    assert raised.value.code == 400
