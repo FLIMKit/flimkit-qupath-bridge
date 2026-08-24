@@ -13,12 +13,31 @@ public class Discovery {
 
     private Discovery() {}
 
+    static final String FILENAME = "bridge.json";
+    static final String LEGACY_FILENAME = "qupath-bridge.json";
+
     public static Path defaultPath() {
-        return Paths.get(System.getProperty("user.home"), ".flimkit", "qupath-bridge.json");
+        return discoveryDir().resolve(FILENAME);
+    }
+
+    static Path discoveryDir() {
+        return Paths.get(System.getProperty("user.home"), ".flimkit");
     }
 
     public static Details read() throws IOException {
-        return read(defaultPath());
+        return readFrom(discoveryDir());
+    }
+
+    static Details readFrom(Path directory) throws IOException {
+        Path current = directory.resolve(FILENAME);
+        if (Files.exists(current))
+            return read(current);
+        Path legacy = directory.resolve(LEGACY_FILENAME);
+        if (Files.exists(legacy))
+            return read(legacy);
+        throw new IOException("FLIMKit has not published a bridge address at "
+                + current + " or " + legacy
+                + ". Start FLIMKit, or run flimkit-bridge.");
     }
 
     public static Details read(Path path) throws IOException {
@@ -31,8 +50,9 @@ public class Discovery {
         } catch (RuntimeException e) {
             throw new IOException("could not read " + path + ": " + e.getMessage());
         }
-        if (!object.has("protocol")
-                || !"flimkit-qupath".equals(object.get("protocol").getAsString()))
+        String protocol = object.has("protocol")
+                ? object.get("protocol").getAsString() : "";
+        if (!"flimkit-bridge".equals(protocol) && !"flimkit-qupath".equals(protocol))
             throw new IOException(path + " is not a FLIMKit bridge file");
         if (!object.has("url") || !object.has("token"))
             throw new IOException(path + " is missing the address or token");
