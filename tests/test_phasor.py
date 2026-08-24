@@ -382,3 +382,116 @@ def test_phasor_settings_are_served(serve_state):
     assert payload['values']['phasor_filter'] == 'none'
     keys = [entry['key'] for entry in payload['schema']]
     assert 'phasor_filter' in keys and 'irf' in keys
+
+
+def test_a_polygon_selects_one_population(two_populations):
+    real, imag, mean = two_populations
+
+    masks = phasor.cursor_masks(
+        real, imag, mean,
+        cursors=[{'id': 'p1', 'type': 'polygon',
+                  'vertices': [[0.25, 0.35], [0.35, 0.35],
+                               [0.35, 0.45], [0.25, 0.45]]}],
+        min_photons=1.0)
+
+    mask = masks['p1']
+    assert mask[:8].all()
+    assert not mask[8:].any()
+
+
+def test_a_polygon_and_an_ellipse_share_one_request(two_populations):
+    real, imag, mean = two_populations
+
+    masks = phasor.cursor_masks(
+        real, imag, mean,
+        cursors=[
+            {'id': 'p1', 'type': 'polygon',
+             'vertices': [[0.25, 0.35], [0.35, 0.35],
+                          [0.35, 0.45], [0.25, 0.45]]},
+            {'id': 'e1', 'center_g': 0.70, 'center_s': 0.35, 'radius': 0.05},
+        ],
+        min_photons=1.0)
+
+    assert masks['p1'].sum() == 128
+    assert masks['e1'].sum() == 128
+    assert not (masks['p1'] & masks['e1']).any()
+
+
+def test_a_polygon_drops_low_photon_pixels(two_populations):
+    real, imag, mean = two_populations
+    mean = mean.copy()
+    mean[0, :] = 0.0
+
+    masks = phasor.cursor_masks(
+        real, imag, mean,
+        cursors=[{'id': 'p1', 'type': 'polygon',
+                  'vertices': [[0.25, 0.35], [0.35, 0.35],
+                               [0.35, 0.45], [0.25, 0.45]]}],
+        min_photons=10.0)
+
+    assert not masks['p1'][0].any()
+    assert masks['p1'][1:8].all()
+
+
+def test_a_polygon_needs_three_vertices(two_populations):
+    real, imag, mean = two_populations
+
+    with pytest.raises(ValueError, match='three vertices'):
+        phasor.cursor_masks(
+            real, imag, mean,
+            cursors=[{'id': 'p1', 'type': 'polygon',
+                      'vertices': [[0.25, 0.35], [0.35, 0.45]]}],
+            min_photons=1.0)
+
+
+def test_a_polygon_with_no_vertices_is_rejected(two_populations):
+    real, imag, mean = two_populations
+
+    with pytest.raises(ValueError, match='three vertices'):
+        phasor.cursor_masks(
+            real, imag, mean,
+            cursors=[{'id': 'p1', 'type': 'polygon'}],
+            min_photons=1.0)
+
+
+def test_an_unknown_cursor_type_is_rejected(two_populations):
+    real, imag, mean = two_populations
+
+    with pytest.raises(ValueError, match='unknown cursor type'):
+        phasor.cursor_masks(
+            real, imag, mean,
+            cursors=[{'id': 'x1', 'type': 'freehand'}],
+            min_photons=1.0)
+
+
+def test_a_polygon_gets_its_own_label(two_populations):
+    real, imag, mean = two_populations
+
+    labels = phasor.label_image(
+        real, imag, mean,
+        cursors=[
+            {'id': 'e1', 'center_g': 0.70, 'center_s': 0.35, 'radius': 0.05},
+            {'id': 'p1', 'type': 'polygon',
+             'vertices': [[0.25, 0.35], [0.35, 0.35],
+                          [0.35, 0.45], [0.25, 0.45]]},
+        ],
+        min_photons=1.0)
+
+    assert set(np.unique(labels)) == {1, 2}
+    assert (labels[8:] == 1).all()
+    assert (labels[:8] == 2).all()
+
+
+def test_a_polygon_reports_lifetimes_like_an_ellipse(two_populations):
+    real, imag, mean = two_populations
+    cursors = [{'id': 'p1', 'type': 'polygon',
+                'vertices': [[0.25, 0.35], [0.35, 0.35],
+                             [0.35, 0.45], [0.25, 0.45]]}]
+
+    masks = phasor.cursor_masks(real, imag, mean, cursors, min_photons=1.0)
+    found = phasor.cursor_stats(real, imag, mean, masks, 80.0)
+
+    assert len(found) == 1
+    assert found[0]['n_pixels'] == 128
+    assert found[0]['tau_phi_ns'] > 0
+    assert found[0]['mean_g'] == pytest.approx(0.30, abs=0.01)
