@@ -5,6 +5,74 @@ import numpy as np
 DEFAULT_MIN_PHOTONS = 0.01
 
 
+PHASOR_SCHEMA = (
+    {'key': 'phasor_filter', 'label': 'Phasor filter', 'type': 'choice',
+     'applies_to': ('phasor',), 'advanced': False, 'default': 'none'},
+    {'key': 'filter_sigma', 'label': 'Gaussian sigma (px)', 'type': 'float',
+     'min': 0.1, 'max': 10.0, 'applies_to': ('phasor',), 'advanced': True,
+     'default': 1.0},
+    {'key': 'filter_size', 'label': 'Median window (px)', 'type': 'int',
+     'min': 3, 'max': 15, 'applies_to': ('phasor',), 'advanced': True,
+     'default': 3},
+    {'key': 'irf', 'label': 'IRF calibration', 'type': 'choice',
+     'applies_to': ('phasor',), 'advanced': False, 'default': 'none'},
+)
+
+_NOTHING = ('', 'none', 'None', 'null')
+
+
+def _choices(key):
+    if key == 'phasor_filter':
+        from flimkit.phasor.filters import phasor_filter_methods
+        return ['none'] + list(phasor_filter_methods())
+    from flimkit_qupath_bridge import irf as irf_module
+    return ['none'] + [entry['id'] for entry in irf_module.available()]
+
+
+def settings():
+    values = {}
+    schema = []
+    for entry in PHASOR_SCHEMA:
+        described = {'key': entry['key'], 'label': entry['label'],
+                     'type': entry['type'],
+                     'applies_to': list(entry['applies_to']),
+                     'advanced': entry['advanced']}
+        for optional in ('min', 'max'):
+            if optional in entry:
+                described[optional] = entry[optional]
+        if entry['type'] == 'choice':
+            described['choices'] = _choices(entry['key'])
+        values[entry['key']] = entry['default']
+        schema.append(described)
+    return {'values': values, 'schema': schema}
+
+
+def normalise(options):
+    options = options or {}
+    found = {entry['key']: entry['default'] for entry in PHASOR_SCHEMA}
+    for entry in PHASOR_SCHEMA:
+        key = entry['key']
+        value = options.get(key)
+        if value is None:
+            continue
+        if entry['type'] == 'float':
+            found[key] = float(value)
+        elif entry['type'] == 'int':
+            found[key] = int(value)
+        else:
+            found[key] = str(value)
+    for key in ('phasor_filter', 'irf'):
+        if found[key] in _NOTHING:
+            found[key] = 'none'
+    return found
+
+
+def cache_key(ident, options):
+    found = normalise(options)
+    return (ident, found['phasor_filter'], found['filter_sigma'],
+            found['filter_size'], found['irf'])
+
+
 def valid_pixels(real, mean, min_photons=DEFAULT_MIN_PHOTONS):
     real = np.asarray(real, dtype=float)
     mean = np.asarray(mean, dtype=float)

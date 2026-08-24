@@ -221,3 +221,62 @@ def test_becker_hickl_sdt_gets_a_phasor():
     assert found['frequency'] > 0
     valid = phasor.valid_pixels(found['real'], found['mean'], min_photons=1.0)
     assert valid.any(), 'no pixel had enough photons for a phasor'
+
+
+def test_settings_lists_the_registered_filters():
+    from flimkit.phasor.filters import phasor_filter_methods
+
+    found = phasor.settings()
+
+    entry = next(e for e in found['schema'] if e['key'] == 'phasor_filter')
+    assert entry['choices'][0] == 'none'
+    assert set(phasor_filter_methods()) <= set(entry['choices'])
+    assert found['values']['phasor_filter'] == 'none'
+
+
+def test_settings_offers_every_installed_machine_irf():
+    from flimkit_qupath_bridge import irf as irf_module
+
+    found = phasor.settings()
+
+    entry = next(e for e in found['schema'] if e['key'] == 'irf')
+    assert entry['choices'][0] == 'none'
+    for installed in irf_module.available():
+        assert installed['id'] in entry['choices']
+
+
+def test_normalise_fills_the_defaults():
+    found = phasor.normalise(None)
+
+    assert found == {'phasor_filter': 'none', 'filter_sigma': 1.0,
+                     'filter_size': 3, 'irf': 'none'}
+
+
+def test_normalise_coerces_the_wire_types():
+    found = phasor.normalise({'filter_sigma': '2.5', 'filter_size': '5'})
+
+    assert found['filter_sigma'] == 2.5
+    assert found['filter_size'] == 5
+
+
+def test_normalise_treats_an_empty_filter_as_none():
+    assert phasor.normalise({'phasor_filter': ''})['phasor_filter'] == 'none'
+    assert phasor.normalise({'phasor_filter': 'None'})['phasor_filter'] == 'none'
+
+
+def test_cache_key_separates_two_filters():
+    plain = phasor.cache_key('d1', {})
+    smoothed = phasor.cache_key('d1', {'phasor_filter': 'median'})
+
+    assert plain != smoothed
+
+
+def test_cache_key_separates_calibrated_from_uncalibrated():
+    plain = phasor.cache_key('d1', {})
+    calibrated = phasor.cache_key('d1', {'irf': 'machine_2026'})
+
+    assert plain != calibrated
+
+
+def test_cache_key_is_stable_across_equivalent_requests():
+    assert phasor.cache_key('d1', {'filter_size': '3'}) == phasor.cache_key('d1', {})
