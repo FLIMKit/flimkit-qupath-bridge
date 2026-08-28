@@ -243,9 +243,9 @@ def test_settings_offers_every_installed_machine_irf():
     found = phasor.settings()
 
     entry = next(e for e in found['schema'] if e['key'] == 'irf')
-    assert entry['choices'][0] == 'none'
+    assert entry['type'] == 'path'
     for installed in irf_module.available():
-        assert installed['id'] in entry['choices']
+        assert installed['id'] in entry['installed']
 
 
 def test_normalise_fills_the_defaults():
