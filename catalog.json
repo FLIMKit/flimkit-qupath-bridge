@@ -9,6 +9,16 @@
             "homepage": "https://github.com/FLIMKit/flimkit-qupath-bridge",
             "releases": [
                 {
+                    "name": "v0.6.0",
+                    "main_url": "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.6.0/qupath-extension-flimkit-bridge-0.6.0.jar",
+                    "javadoc_urls": [
+                        "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.6.0/qupath-extension-flimkit-bridge-0.6.0-javadoc.jar"
+                    ],
+                    "version_range": {
+                        "min": "v0.7.0"
+                    }
+                },
+                {
                     "name": "v0.5.0",
                     "main_url": "https://github.com/FLIMKit/flimkit-qupath-bridge/releases/download/v0.5.0/qupath-extension-flimkit-bridge-0.5.0.jar",
                     "javadoc_urls": [

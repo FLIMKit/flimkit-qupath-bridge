@@ -61,6 +61,71 @@ public class BridgeClient {
         return response.body();
     }
 
+    public String zstackDefaults() throws IOException, InterruptedException {
+        var response = client.send(
+                request("/v1/zstack/defaults").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("GET z-stack defaults returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
+    public String scanZstack(String ptuDir) throws IOException, InterruptedException {
+        return postZstack("/v1/zstack/scan", "{\"ptu_dir\":" + quote(ptuDir) + "}");
+    }
+
+    public String runZstack(String body) throws IOException, InterruptedException {
+        return postZstack("/v1/zstack", body);
+    }
+
+    public String exportZstack(String body) throws IOException, InterruptedException {
+        return postZstack("/v1/zstack/export", body);
+    }
+
+    private String postZstack(String path, String body)
+            throws IOException, InterruptedException {
+        var response = client.send(
+                request(path)
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200)
+            throw new IOException("POST " + path + " returned " + response.statusCode()
+                    + ": " + response.body());
+        return response.body();
+    }
+
+    /**
+     * Downloads one fitted z-stack as an OME-TIFF, for a QuPath that cannot
+     * reach the bridge's own disk. Streamed straight to a file: a stack is
+     * routinely larger than the heap.
+     */
+    public FetchedImage fetchZstackVolume(String groupDir, String label,
+                                          double zStepUm, double pixelSizeUm)
+            throws IOException, InterruptedException {
+        String path = "/v1/zstack/volume.ome.tif?group_dir="
+                + URLEncoder.encode(groupDir, StandardCharsets.UTF_8)
+                + "&z_step_um=" + zStepUm;
+        if (label != null && !label.isBlank())
+            path += "&label=" + URLEncoder.encode(label, StandardCharsets.UTF_8);
+        if (pixelSizeUm > 0)
+            path += "&pixel_size_um=" + pixelSizeUm;
+        Path file = Files.createTempFile("flimkit-zstack-", ".ome.tif");
+        var response = client.send(
+                request(path).timeout(Duration.ofHours(1)).GET().build(),
+                HttpResponse.BodyHandlers.ofFile(file));
+        if (response.statusCode() != 200) {
+            String why = Files.exists(file) ? Files.readString(file) : "";
+            Files.deleteIfExists(file);
+            throw new IOException("GET z-stack volume returned "
+                    + response.statusCode() + ": " + why);
+        }
+        return new FetchedImage(label == null ? "z-stack" : label,
+                response.body(), "ns");
+    }
+
     public String jobStatus(String jobId) throws IOException, InterruptedException {
         var response = client.send(
                 request("/v1/jobs/" + jobId).GET().build(),
