@@ -39,7 +39,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
     private String token = "";
     private boolean manual = false;
 
-    static final String EXTENSION_VERSION = "0.5.0";
+    static final String EXTENSION_VERSION = "0.6.0";
 
     static final int PROTOCOL_VERSION = 1;
 
@@ -68,6 +68,7 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
                 menuItem("Add FLIMKit images to project", () -> addImages(qupath)),
                 null,
                 menuItem("Stitch and fit a mosaic...", () -> stitchAndFit(qupath)),
+                menuItem("Fit a z-stack...", () -> fitZstack(qupath)),
                 menuItem("Fit ROI decays...", () -> fitRois(qupath)),
                 menuItem("Fit per-pixel lifetimes...", () -> fitPixels(qupath)),
                 menuItem("Phasor plot...", () -> openPhasor(qupath)),
@@ -507,6 +508,191 @@ public class FlimKitBridgeExtension implements QuPathExtension, GitHubProject {
             Dialogs.showErrorMessage(getName(),
                     "Could not start stitching\n\n" + e.getMessage());
         }
+    }
+
+    private void fitZstack(QuPathGUI qupath) {
+        var chooser = new javafx.stage.DirectoryChooser();
+        chooser.setTitle("Choose the folder holding the z-slices");
+        var folder = chooser.showDialog(null);
+        if (folder == null)
+            return;
+        try {
+            var client = client();
+            var found = JsonParser.parseString(
+                    client.scanZstack(folder.getAbsolutePath())).getAsJsonObject();
+            int stacks = found.get("n_stacks").getAsInt();
+            if (stacks == 0) {
+                Dialogs.showErrorMessage(getName(),
+                        "No z-stack slices in " + folder.getName() + ".\n\n"
+                                + "FLIMKit reads one file per slice, named "
+                                + "region_z1.ptu, region_z2.ptu and so on "
+                                + "(region_t1_s1_z1.ptu also works).");
+                return;
+            }
+            int slices = found.get("n_slices").getAsInt();
+            if (!Dialogs.showConfirmDialog(getName(),
+                    describeStacks(found) + "\n\nEach stack is fitted as one FOV: "
+                            + "the decay is pooled over its slices, the lifetimes "
+                            + "are fitted once and locked, and every slice then "
+                            + "gets its own per-pixel maps."))
+                return;
+            var defaults = JsonParser.parseString(
+                    client.zstackDefaults()).getAsJsonObject();
+            var chosen = new FitDialog(defaults).prompt("Fit a z-stack", "zstack");
+            if (chosen == null)
+                return;
+            var body = new JsonObject();
+            body.addProperty("ptu_dir", folder.getAbsolutePath());
+            body.add("params", chosen);
+            var started = JsonParser.parseString(
+                    client.runZstack(body.toString())).getAsJsonObject();
+            String jobId = started.get("job").getAsString();
+            String outputDir = started.get("output_dir").getAsString();
+            new BridgeJob(client, jobId,
+                    "FLIMKit: " + stacks + " z-stack(s), " + slices + " slices").watch(
+                    status -> importVolumes(qupath, client, jobId, outputDir),
+                    problem -> {
+                        if (problem == null)
+                            Dialogs.showInfoNotification(getName(), "Cancelled");
+                        else
+                            Dialogs.showErrorMessage(getName(),
+                                    "Z-stack fit failed\n\n" + problem);
+                    });
+        } catch (Exception e) {
+            logger.error("Could not start the z-stack fit", e);
+            Dialogs.showErrorMessage(getName(),
+                    "Could not start the z-stack fit\n\n" + e.getMessage());
+        }
+    }
+
+    static String describeStacks(JsonObject found) {
+        var lines = new ArrayList<String>();
+        int stacks = found.get("n_stacks").getAsInt();
+        lines.add(stacks == 1 ? "Found 1 z-stack:" : "Found " + stacks + " z-stacks:");
+        for (var element : found.getAsJsonArray("stacks")) {
+            var stack = element.getAsJsonObject();
+            lines.add("  " + stack.get("label").getAsString() + " - "
+                    + stack.get("n_slices").getAsInt() + " slices (z "
+                    + stack.get("z_first").getAsInt() + " to "
+                    + stack.get("z_last").getAsInt() + ")");
+        }
+        return String.join("\n", lines);
+    }
+
+    private void importVolumes(QuPathGUI qupath, BridgeClient client,
+                               String jobId, String outputDir) {
+        List<ZStackResults.Volume> volumes = List.of();
+        var problems = new ArrayList<String>();
+        try {
+            var result = resultOf(client.jobResult(jobId));
+            volumes = ZStackResults.volumes(result);
+            problems.addAll(ZStackResults.problems(result));
+        } catch (Exception e) {
+            logger.warn("Could not read the z-stack result", e);
+            problems.add("could not read the job result: " + e.getMessage());
+        }
+        var project = qupath.getProject();
+        if (project == null || volumes.isEmpty()) {
+            String why = project == null
+                    ? "\n\nOpen a project and the volumes can be added to it "
+                            + "automatically."
+                    : "";
+            Dialogs.showInfoNotification(getName(),
+                    "Finished. FLIMKit wrote its z-stacks to\n" + outputDir + why
+                            + report(problems));
+            return;
+        }
+        var manifest = ProjectManifest.open(project);
+        var added = new ArrayList<String>();
+        var fetched = new ArrayList<String>();
+        for (var volume : volumes) {
+            String name = volume.label() + " z-stack";
+            Path stored = null;
+            try {
+                var entry = ProjectImporter.addVolume(project,
+                        ZStackResults.openableAs(volume.file(), volume.format()), name);
+                stored = volume.file();
+                describeVolume(entry, volume, outputDir);
+                added.add(entry.getImageName());
+            } catch (Exception e) {
+                logger.info("Could not open {} from disk, fetching it instead: {}",
+                        volume.file(), e.getMessage());
+                try {
+                    stored = fetchVolume(project, client, volume);
+                    var entry = ProjectImporter.addNamed(project, stored, name);
+                    describeVolume(entry, volume, outputDir);
+                    added.add(entry.getImageName());
+                    fetched.add(volume.label());
+                } catch (Exception fetchFailed) {
+                    logger.warn("Could not add {}", volume.label(), fetchFailed);
+                    problems.add(volume.label() + ": " + fetchFailed.getMessage());
+                    continue;
+                }
+            }
+            if (manifest != null)
+                manifest.recordImage(volume.label(), stored.toString(),
+                        String.join(", ", volume.labelled()), outputDir);
+        }
+        try {
+            project.syncChanges();
+        } catch (IOException e) {
+            logger.error("Could not save the project", e);
+        }
+        saveManifest(manifest);
+        qupath.refreshProject();
+        if (added.isEmpty()) {
+            Dialogs.showErrorMessage(getName(),
+                    "Fitted, but nothing could be added from\n" + outputDir
+                            + report(problems)
+                            + "\n\nRun the fit again with Volume format set to "
+                            + "ome-tiff if QuPath cannot read the Zarr store.");
+            return;
+        }
+        String note = fetched.isEmpty() ? ""
+                : "\n\nDownloaded over the bridge as OME-TIFF, since this QuPath "
+                        + "cannot reach FLIMKit's disk: " + String.join(", ", fetched);
+        Dialogs.showInfoNotification(getName(),
+                "Added " + String.join(", ", added) + note + report(problems));
+    }
+
+    private Path fetchVolume(Project<BufferedImage> project, BridgeClient client,
+                             ZStackResults.Volume volume) throws IOException {
+        if (!volume.canBeFetched())
+            throw new IOException("QuPath cannot open " + volume.file()
+                    + " and this bridge is too old to send it over the connection");
+        try {
+            var downloaded = client.fetchZstackVolume(
+                    volume.groupDir(), volume.label(), volume.zStepUm(),
+                    volume.pixelSizeUm());
+            return ProjectImporter.storeBesideProject(
+                    project, volume.label() + "_zstack", downloaded.file(),
+                    ".ome.tif");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while downloading the volume");
+        }
+    }
+
+    private static void describeVolume(
+            qupath.lib.projects.ProjectImageEntry<BufferedImage> entry,
+            ZStackResults.Volume volume, String outputDir) {
+        entry.setDescription(volume.describe());
+        entry.getMetadata().put("flimkit.source", outputDir);
+        entry.getMetadata().put("flimkit.n_z", String.valueOf(volume.nZ()));
+        if (!volume.tausNs().isEmpty())
+            entry.getMetadata().put("flimkit.taus_ns", joinNumbers(volume.tausNs()));
+    }
+
+    private static String report(List<String> problems) {
+        return problems.isEmpty() ? ""
+                : "\n\nNot added:\n" + String.join("\n", problems);
+    }
+
+    private static String joinNumbers(List<Double> values) {
+        var parts = new ArrayList<String>();
+        for (Double value : values)
+            parts.add(String.format("%.4f", value));
+        return String.join(", ", parts);
     }
 
     private void fitPixels(QuPathGUI qupath) {

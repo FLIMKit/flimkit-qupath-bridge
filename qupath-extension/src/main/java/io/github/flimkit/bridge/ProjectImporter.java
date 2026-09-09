@@ -61,6 +61,38 @@ public class ProjectImporter {
         return entry;
     }
 
+    /**
+     * Adds a volume that may be a directory rather than a file, trying each
+     * path QuPath might accept for it. Throws with every path tried if none
+     * open, so the caller can say where the store is instead.
+     */
+    public static ProjectImageEntry<BufferedImage> addVolume(
+            Project<BufferedImage> project, java.util.List<Path> candidates,
+            String name) throws IOException {
+        var refused = new java.util.ArrayList<String>();
+        for (Path candidate : candidates) {
+            if (!Files.exists(candidate)) {
+                refused.add(candidate + " (not there)");
+                continue;
+            }
+            try {
+                var support = ImageServerProvider.getPreferredUriImageSupport(
+                        BufferedImage.class, candidate.toAbsolutePath().toString());
+                if (support == null || support.getBuilders().isEmpty()) {
+                    refused.add(candidate.toString());
+                    continue;
+                }
+                var entry = project.addImage(support.getBuilders().get(0));
+                entry.setImageName(name);
+                return entry;
+            } catch (Exception e) {
+                refused.add(candidate + " (" + e.getMessage() + ")");
+            }
+        }
+        throw new IOException("QuPath could not open the volume. Tried:\n"
+                + String.join("\n", refused));
+    }
+
     public static String label(String imageId, String unit) {
         if (unit == null || unit.isBlank())
             return "FLIMKit " + imageId;

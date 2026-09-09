@@ -109,6 +109,40 @@ POST /v1/datasets   {"path": "/path/R_2_flimkit"}
 
 A region drawn on that canvas is then fitted from the photons in the stitched cube, not from the displayed image.
 
+## Fitting a z-stack from QuPath
+
+`Fit a z-stack...` points FLIMKit's z-stack pipeline at a folder of slices, the same folder you would hand its own z-stack fit. One file per slice, named `region_z1.ptu`, `region_z2.ptu` and so on; `region_t1_s1_z1.ptu` works too, and a folder holding several regions is fitted as several stacks in one run.
+
+```
+POST /v1/zstack/scan   {"ptu_dir": "/path/slices"}
+POST /v1/zstack        {"ptu_dir": "/path/slices", "params": {"n_exp": 2, "z_step_um": 2.0}}
+GET  /v1/zstack/defaults
+```
+
+The scan runs before the settings dialog, so a folder with nothing in it says so, and a folder with something in it says how many stacks and how many slices each before anything is fitted. A directory chooser is easy to miss with, and the fit is long enough that finding out afterwards is expensive.
+
+Each stack is fitted as one FOV, which is the point of doing it this way rather than fitting each slice on its own. The decay is pooled over every slice, the lifetimes are fitted once from that pooled decay and then locked, and each slice gets its own per-pixel fit with only the amplitudes free. A single slice rarely carries the photons to identify two lifetimes; the whole stack usually does. `ref_tau1_ns` and the rest skip the pooled fit and lock lifetimes you already know, and they have to be given for every component or none.
+
+The result comes back as one OME-Zarr store per stack, a `(C, Z, Y, X)` volume with a channel per map: intensity in photons, `tau_mean_int` and `tau_mean_amp` in nanoseconds, an `alpha_N` per component, and the bound fraction and chi-squared maps when they were computed. QuPath opens it as a real z-stack, so the z-slider moves through the slices and an annotation carries the plane it was drawn on. `z_step_um` sets the z spacing in the store; the lateral spacing is read from the first slice's own pixel size.
+
+Zarr because these get large. A 12 slice stack of 512 square maps with eight channels is 100 MB before anything is compressed, and a mosaic of them is worse. The store is chunked per slice per channel, so a viewer reads the plane it is showing and not the volume. It is written at a single resolution deliberately: a pyramid is built by interpolating between neighbours, and a lifetime map is mostly NaN where nothing was fitted, so the coarse levels would smear that NaN over the pixels that did fit.
+
+`zarr` and `ome-zarr` are dependencies of `flimkit-bridge` itself rather than an extra, so `pip install flimkit-bridge` is all this needs and a bridge that cannot write a store does not exist.
+
+`ome-tiff` is the other choice in the dialog, same channels and same axes, for a QuPath or a Fiji that will not read the store. Nothing is lost by picking it beyond the chunking. A run that has already happened can be rewritten in the other format without fitting again:
+
+```
+POST /v1/zstack/export   {"group_dir": "/path/out/RegionA", "format": "ome-tiff", "z_step_um": 2.0}
+```
+
+which is also how to correct a z step that was entered wrong.
+
+The volume reaches QuPath as a path, not as bytes: the bridge writes the store and QuPath opens it off disk, the same way the stitch pipeline hands over its products. Over an SSH-forwarded port that path is meaningless locally, so when QuPath cannot open it the extension falls back to `GET /v1/zstack/volume.ome.tif`, which streams the same volume as one OME-TIFF and stores it beside the project. The notification says which stacks came that way. The slices themselves are never uploaded: `ptu_dir` is a path FLIMKit opens, so a forwarded session has to name a folder the bridge can see, and gets a 404 naming the folder if it does not.
+
+The `.npy` maps FLIMKit writes per slice stay where they are, and so do its `_zseries.csv` and `_zseries.json`, which carry the mean lifetime, the bound fraction and the fitted pixel count per slice. The project entry description names both, alongside the locked lifetimes and the voxel size, so the depth trend is one file away rather than something to reconstruct.
+
+Per-slice PNGs, RGB composites and detail plots are off by default here. FLIMKit writes them for its own review; the bridge is feeding QuPath, and each one costs a second summed fit per slice. `Save per-slice plots` in the advanced settings turns them back on.
+
 ## Where the server lives
 
 The server moved out into [flimkit-bridge](https://github.com/FLIMKit/flimkit-bridge) once there were two clients for it, so a fix reaches this extension and the Fiji one at the same time. This repository keeps the QuPath extension and the catalog.

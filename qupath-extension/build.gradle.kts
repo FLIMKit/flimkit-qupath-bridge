@@ -31,7 +31,7 @@ repositories {
 qupathExtension {
     name = "qupath-extension-flimkit-bridge"
     group = "io.github.flimkit"
-    version = "0.5.0"
+    version = "0.6.0"
     description = "Direct image and ROI exchange between FLIMKit and QuPath"
     automaticModule = "io.github.flimkit.bridge"
 }
