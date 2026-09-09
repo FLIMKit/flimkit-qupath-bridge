@@ -17,7 +17,7 @@ The bigger difference is on the other side. This one ships a QuPath extension th
 The Python half goes into the environment FLIMKit runs in:
 
 ```bash
-pip install flimkit-qupath-bridge
+pip install flimkit-bridge
 ```
 
 That pulls FLIMKit with it. The bridge then starts with FLIMKit, and `flimkit-bridge` is on the path for the headless server.
