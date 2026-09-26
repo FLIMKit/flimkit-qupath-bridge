@@ -399,7 +399,6 @@ public class PhasorWindow {
             array.add(entry);
         }
         body.add("cursors", array);
-        body.addProperty("min_photons", 1.0);
         if (!options.entrySet().isEmpty())
             body.add("options", options);
         if (labels)
