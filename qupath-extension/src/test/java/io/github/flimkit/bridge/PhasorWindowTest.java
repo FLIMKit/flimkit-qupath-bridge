@@ -127,11 +127,11 @@ class PhasorWindowTest {
     }
 
     @Test
-    void everyCursorCarriesThePhotonFloor() {
+    void cursorsCountThePixelsThePlotShows() {
         var body = parse(PhasorWindow.requestBody(
                 List.of(ellipse()), NO_OPTIONS, false));
 
-        assertEquals(1.0, body.get("min_photons").getAsDouble(), 1e-9);
+        assertFalse(body.has("min_photons"));
     }
 
     @Test
